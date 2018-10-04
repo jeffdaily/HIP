@@ -47,6 +47,7 @@ THE SOFTWARE.
 #include "hip_hcc_internal.h"
 #include "trace_helper.h"
 #include "env.h"
+#include <sys/time.h>
 
 // TODO - create a stream-based debug interface as an additional option for tprintf
 #define DB_PEER_CTX 0
@@ -96,6 +97,7 @@ int HIP_SYNC_HOST_ALLOC = 1;
 int HIP_INIT_ALLOC = -1;
 int HIP_SYNC_STREAM_WAIT = 0;
 int HIP_FORCE_NULL_STREAM = 0;
+bool HIP_PRINT_PROFILE = getenv("HIP_PRINT_PROFILE") != NULL;
 
 
 #if (__hcc_workweek__ >= 17300)
@@ -221,6 +223,12 @@ ihipCtx_t* ihipGetTlsDefaultCtx() {
         ihipSetTlsDefaultCtx(ihipGetPrimaryCtx(0));
     }
     return tls_defaultCtx;
+}
+
+static suseconds_t get_ts() {
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return tv.tv_sec * 1e6 + tv.tv_usec;
 }
 
 hipError_t ihipSynchronize(void) {
@@ -1372,6 +1380,14 @@ void ihipInit() {
 
     HipReadEnv();
 
+    if (HIP_PRINT_PROFILE) {
+        uint64_t gpu_time = getTicks();
+        suseconds_t host_time = get_ts();
+        std::stringstream ss;
+        ss << "hcc-ts-ref, prof_name gpu_host_ts, unix_ts " << host_time <<
+            ", gpu_ts " << gpu_time << std::endl;
+        std::cerr << ss.str();
+    }
 
     /*
      * Build a table of valid compute devices.
@@ -1798,6 +1814,19 @@ const char* ihipErrorString(hipError_t hip_error) {
 // context. So we check dstCtx's and srcCtx's peerList to see if the both include thisCtx.
 bool ihipStream_t::canSeeMemory(const ihipCtx_t* copyEngineCtx, const hc::AmPointerInfo* dstPtrInfo,
                                 const hc::AmPointerInfo* srcPtrInfo) {
+    suseconds_t ts_lock_dst = 0,
+                ts_check_dst = 0,
+                ts_lock_src = 0,
+                ts_check_src = 0;
+    suseconds_t lock_dst_time = 0,
+                check_dst_time = 0,
+                lock_src_time = 0,
+                check_src_time = 0;
+    ihipCtx_t* dstCtx_ = NULL, *srcCtx_ = NULL;
+
+    if (HIP_PRINT_PROFILE)
+      ts_check_dst = get_ts();
+
     if (copyEngineCtx == nullptr) {
         return false;
     }
@@ -1816,7 +1845,13 @@ bool ihipStream_t::canSeeMemory(const ihipCtx_t* copyEngineCtx, const hc::AmPoin
 #endif
         if (copyEngineCtx != dstCtx) {
             // Only checks peer list if contexts are different
+            if (HIP_PRINT_PROFILE)
+              ts_lock_dst = get_ts();
             LockedAccessor_CtxCrit_t ctxCrit(dstCtx->criticalData());
+            if (HIP_PRINT_PROFILE) {
+              lock_dst_time = get_ts() - ts_lock_dst;
+              dstCtx_ = dstCtx;
+            }
 #if DB_PEER_CTX
             std::cerr << "checking peer : copyEngineCtx =" << copyEngineCtx << " dstCtx =" << dstCtx
                       << " peerCnt=" << ctxCrit->peerCnt() << "\n";
@@ -1827,6 +1862,10 @@ bool ihipStream_t::canSeeMemory(const ihipCtx_t* copyEngineCtx, const hc::AmPoin
         }
     }
 
+    if (HIP_PRINT_PROFILE) {
+      check_dst_time = get_ts() - ts_check_dst;
+      ts_check_src = get_ts();
+    }
 
     // TODO - pointer-info stores a deviceID not a context,may have some unusual side-effects here:
     if (srcPtrInfo->_sizeBytes == 0) {
@@ -1839,7 +1878,13 @@ bool ihipStream_t::canSeeMemory(const ihipCtx_t* copyEngineCtx, const hc::AmPoin
 #endif
         if (copyEngineCtx != srcCtx) {
             // Only checks peer list if contexts are different
+            if (HIP_PRINT_PROFILE)
+              ts_lock_src = get_ts();
             LockedAccessor_CtxCrit_t ctxCrit(srcCtx->criticalData());
+            if (HIP_PRINT_PROFILE) {
+              lock_src_time = get_ts() - ts_lock_src;
+              srcCtx_ = srcCtx;
+            }
 #if DB_PEER_CTX
             std::cerr << "checking peer : copyEngineCtx =" << copyEngineCtx << " srcCtx =" << srcCtx
                       << " peerCnt=" << ctxCrit->peerCnt() << "\n";
@@ -1850,6 +1895,33 @@ bool ihipStream_t::canSeeMemory(const ihipCtx_t* copyEngineCtx, const hc::AmPoin
         }
     }
 
+    if (HIP_PRINT_PROFILE) {
+      check_src_time = get_ts() - ts_check_src;
+      suseconds_t time = get_ts() - ts_check_dst;
+      std::thread::id this_id = std::this_thread::get_id();
+      std::stringstream ss;
+      ss << "hip-profile, prof_name ihipStream_t::canSeeMemory, id " << this_id <<
+        ", ts " << ts_check_dst <<
+        ", time " << time <<
+        ", ts_check_dst " << ts_check_dst <<
+        ", check_dst_time " << check_dst_time <<
+        ", ts_lock_dst " << ts_lock_dst <<
+        ", lock_dst_time " << lock_dst_time <<
+        ", ts_check_src " << ts_check_src <<
+        ", check_src_time " << check_src_time <<
+        ", ts_lock_src " << ts_lock_src <<
+        ", lock_src_time " << lock_src_time;
+      if (dstCtx_ == NULL)
+        ss << ", dstCtx NULL";
+      else
+        ss << ", dstCtx " << dstCtx_;
+      if (srcCtx_ == NULL)
+        ss << ", srcCtx NULL";
+      else
+        ss << ", srcCtx " << srcCtx_;
+      ss << std::endl;
+      std::cerr << ss.str();
+    }
     return true;
 };
 
