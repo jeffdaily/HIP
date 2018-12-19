@@ -5,6 +5,7 @@ project(hip)
 # Options
 #############################
 option(BUILD_HIPIFY_CLANG "Enable building the CUDA->HIP converter" OFF)
+option(MONOLITHIC "Use a single CPP file to avoid TLS penalty" OFF)
 
 #############################
 # Setup config generation
@@ -173,7 +174,12 @@ if(HIP_PLATFORM STREQUAL "hcc")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${HIP_HCC_BUILD_FLAGS}")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${HIP_HCC_BUILD_FLAGS}")
 
-    set(SOURCE_FILES_RUNTIME
+    if (MONOLITHIC)
+        set(SOURCE_FILES_RUNTIME
+        src/monolithic.cpp)
+        include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+    else ()
+        set(SOURCE_FILES_RUNTIME
         src/code_object_bundle.cpp
         src/hip_clang.cpp
         src/hip_hcc.cpp
@@ -191,6 +197,7 @@ if(HIP_PLATFORM STREQUAL "hcc")
         src/hip_surface.cpp
         src/env.cpp
         src/program_state.cpp)
+    endif (MONOLITHIC)
 
     set(SOURCE_FILES_DEVICE
         src/device_util.cpp)
