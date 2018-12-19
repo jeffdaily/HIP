@@ -33,7 +33,7 @@ THE SOFTWARE.
 //
 
 //---
-hipError_t ihipStreamCreate(hipStream_t* stream, unsigned int flags) {
+hipError_t ihipStreamCreate(TlsData *tls, hipStream_t* stream, unsigned int flags) {
     ihipCtx_t* ctx = ihipGetTlsDefaultCtx();
 
     hipError_t e = hipSuccess;
@@ -73,14 +73,14 @@ hipError_t ihipStreamCreate(hipStream_t* stream, unsigned int flags) {
 hipError_t hipStreamCreateWithFlags(hipStream_t* stream, unsigned int flags) {
     HIP_INIT_API(stream, flags);
 
-    return ihipLogStatus(ihipStreamCreate(stream, flags));
+    return ihipLogStatus(ihipStreamCreate(tls, stream, flags));
 }
 
 //---
 hipError_t hipStreamCreate(hipStream_t* stream) {
     HIP_INIT_API(stream);
 
-    return ihipLogStatus(ihipStreamCreate(stream, hipStreamDefault));
+    return ihipLogStatus(ihipStreamCreate(tls, stream, hipStreamDefault));
 }
 
 

@@ -109,7 +109,7 @@ hipError_t hipModuleUnload(hipModule_t hmod) {
     return ihipLogStatus(hipSuccess);
 }
 
-hipError_t ihipModuleLaunchKernel(hipFunction_t f, uint32_t globalWorkSizeX,
+hipError_t ihipModuleLaunchKernel(TlsData *tls, hipFunction_t f, uint32_t globalWorkSizeX,
                                   uint32_t globalWorkSizeY, uint32_t globalWorkSizeZ,
                                   uint32_t localWorkSizeX, uint32_t localWorkSizeY,
                                   uint32_t localWorkSizeZ, size_t sharedMemBytes,
@@ -232,7 +232,7 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f, uint32_t gridDimX, uint32_t gr
                                  void** kernelParams, void** extra) {
     HIP_INIT_API(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
                  hStream, kernelParams, extra);
-    return ihipLogStatus(ihipModuleLaunchKernel(
+    return ihipLogStatus(ihipModuleLaunchKernel(tls, 
         f, blockDimX * gridDimX, blockDimY * gridDimY, gridDimZ * blockDimZ, blockDimX, blockDimY,
         blockDimZ, sharedMemBytes, hStream, kernelParams, extra, nullptr, nullptr));
 }
@@ -246,7 +246,7 @@ hipError_t hipHccModuleLaunchKernel(hipFunction_t f, uint32_t globalWorkSizeX,
                                     hipEvent_t startEvent, hipEvent_t stopEvent) {
     HIP_INIT_API(f, globalWorkSizeX, globalWorkSizeY, globalWorkSizeZ, localWorkSizeX,
                  localWorkSizeY, localWorkSizeZ, sharedMemBytes, hStream, kernelParams, extra);
-    return ihipLogStatus(ihipModuleLaunchKernel(
+    return ihipLogStatus(ihipModuleLaunchKernel(tls, 
         f, globalWorkSizeX, globalWorkSizeY, globalWorkSizeZ, localWorkSizeX, localWorkSizeY,
         localWorkSizeZ, sharedMemBytes, hStream, kernelParams, extra, startEvent, stopEvent));
 }
@@ -259,6 +259,7 @@ struct Agent_global {
 };
 
 inline void track(const Agent_global& x) {
+    GET_TLS();
     tprintf(DB_MEM, "  add variable '%s' with ptr=%p size=%u to tracker\n", x.name.c_str(),
             x.address, x.byte_cnt);
 
@@ -288,6 +289,7 @@ inline hsa_status_t copy_agent_global_variables(hsa_executable_t, hsa_agent_t,
 }
 
 inline hsa_agent_t this_agent() {
+    GET_TLS();
     auto ctx = ihipGetTlsDefaultCtx();
 
     if (!ctx) throw runtime_error{"No active HIP context."};
@@ -402,10 +404,10 @@ string read_elf_file_as_string(
     //               Little Endian.
     if (!file) return {};
 
-    auto h = static_cast<const Elf64_Ehdr*>(file);
+    auto h = static_cast<const ELFIO::Elf64_Ehdr*>(file);
     auto s = static_cast<const char*>(file);
     // This assumes the common case of SHT being the last part of the ELF.
-    auto sz = sizeof(Elf64_Ehdr) + h->e_shoff + h->e_shentsize * h->e_shnum;
+    auto sz = sizeof(ELFIO::Elf64_Ehdr) + h->e_shoff + h->e_shentsize * h->e_shnum;
 
     return string{s, s + sz};
 }
@@ -430,7 +432,7 @@ string code_object_blob_for_agent(const void* maybe_bundled_code, hsa_agent_t ag
 }
 }  // namespace
 
-hipError_t ihipModuleGetFunction(hipFunction_t* func, hipModule_t hmod, const char* name) {
+hipError_t ihipModuleGetFunction(TlsData *tls, hipFunction_t* func, hipModule_t hmod, const char* name) {
 
     if (!func || !name) return hipErrorInvalidValue;
 
@@ -456,7 +458,7 @@ hipError_t ihipModuleGetFunction(hipFunction_t* func, hipModule_t hmod, const ch
 
 hipError_t hipModuleGetFunction(hipFunction_t* hfunc, hipModule_t hmod, const char* name) {
     HIP_INIT_API(hfunc, hmod, name);
-    return ihipLogStatus(ihipModuleGetFunction(hfunc, hmod, name));
+    return ihipLogStatus(ihipModuleGetFunction(tls, hfunc, hmod, name));
 }
 
 hipError_t hipModuleGetGlobal(hipDeviceptr_t* dptr, size_t* bytes, hipModule_t hmod,
@@ -478,6 +480,7 @@ namespace
     inline
     hipFuncAttributes make_function_attributes(const amd_kernel_code_t& header)
     {
+        GET_TLS();
         hipFuncAttributes r{};
 
         hipDeviceProp_t prop{};
@@ -532,7 +535,7 @@ hipError_t hipFuncGetAttributes(hipFuncAttributes* attr, const void* func)
     return hipSuccess;
 }
 
-hipError_t ihipModuleLoadData(hipModule_t* module, const void* image) {
+hipError_t ihipModuleLoadData(TlsData *tls, hipModule_t* module, const void* image) {
 
     if (!module) return hipErrorInvalidValue;
 
@@ -554,7 +557,7 @@ hipError_t ihipModuleLoadData(hipModule_t* module, const void* image) {
 
 hipError_t hipModuleLoadData(hipModule_t* module, const void* image) {
     HIP_INIT_API(module, image);
-    return ihipLogStatus(ihipModuleLoadData(module,image));
+    return ihipLogStatus(ihipModuleLoadData(tls, module,image));
 }
 
 hipError_t hipModuleLoad(hipModule_t* module, const char* fname) {
@@ -568,13 +571,13 @@ hipError_t hipModuleLoad(hipModule_t* module, const char* fname) {
 
     vector<char> tmp{istreambuf_iterator<char>{file}, istreambuf_iterator<char>{}};
 
-    return ihipLogStatus(ihipModuleLoadData(module, tmp.data()));
+    return ihipLogStatus(ihipModuleLoadData(tls, module, tmp.data()));
 }
 
 hipError_t hipModuleLoadDataEx(hipModule_t* module, const void* image, unsigned int numOptions,
                                hipJitOption* options, void** optionValues) {
     HIP_INIT_API(module, image, numOptions, options, optionValues);
-    return ihipLogStatus(ihipModuleLoadData(module, image));
+    return ihipLogStatus(ihipModuleLoadData(tls, module, image));
 }
 
 hipError_t hipModuleGetTexRef(textureReference** texRef, hipModule_t hmod, const char* name) {

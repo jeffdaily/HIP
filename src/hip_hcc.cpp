@@ -143,26 +143,27 @@ std::vector<ProfTrigger> g_dbStopTriggers;
 
 // This is the implicit context used by all HIP commands.
 // It can be set by hipSetDevice or by the CTX manipulation commands:
-thread_local hipError_t tls_lastHipError = hipSuccess;
+//static thread_local hipError_t tls_lastHipError = hipSuccess;
 
 
-thread_local TidInfo tls_tidInfo;
+//static thread_local TidInfo tls_tidInfo;
 
 
 //=================================================================================================
 // Top-level "free" functions:
 //=================================================================================================
 uint64_t recordApiTrace(std::string* fullStr, const std::string& apiStr) {
-    auto apiSeqNum = tls_tidInfo.apiSeqNum();
-    auto tid = tls_tidInfo.tid();
+    TlsData *tls = tls_get_ptr();
+    auto apiSeqNum = tls->tidInfo.apiSeqNum();
+    auto tid = tls->tidInfo.tid();
 
     if ((tid < g_dbStartTriggers.size()) && (apiSeqNum >= g_dbStartTriggers[tid].nextTrigger())) {
-        printf("info: resume profiling at %lu\n", apiSeqNum);
+        std::printf("info: resume profiling at %lu\n", apiSeqNum);
         RESUME_PROFILING;
         g_dbStartTriggers.pop_back();
     };
     if ((tid < g_dbStopTriggers.size()) && (apiSeqNum >= g_dbStopTriggers[tid].nextTrigger())) {
-        printf("info: stop profiling at %lu\n", apiSeqNum);
+        std::printf("info: stop profiling at %lu\n", apiSeqNum);
         STOP_PROFILING;
         g_dbStopTriggers.pop_back();
     };
@@ -205,8 +206,9 @@ ihipCtx_t* ihipGetPrimaryCtx(unsigned deviceIndex) {
 };
 
 
-static thread_local ihipCtx_t* tls_defaultCtx = nullptr;
-void ihipSetTlsDefaultCtx(ihipCtx_t* ctx) { tls_defaultCtx = ctx; }
+//void ihipSetTlsDefaultCtx(ihipCtx_t* ctx) {
+//    tls_get_ptr()->defaultCtx = ctx;
+//}
 
 
 //---
@@ -215,19 +217,26 @@ void ihipSetTlsDefaultCtx(ihipCtx_t* ctx) { tls_defaultCtx = ctx; }
 //  setDevice first.
 //  - hipDeviceReset destroys the primary context for device?
 //  - Then context is created again for next usage.
-ihipCtx_t* ihipGetTlsDefaultCtx() {
-    // Per-thread initialization of the TLS:
-    if ((tls_defaultCtx == nullptr) && (g_deviceCnt > 0)) {
-        ihipSetTlsDefaultCtx(ihipGetPrimaryCtx(0));
-    }
-    return tls_defaultCtx;
-}
+//ihipCtx_t* ihipGetTlsDefaultCtx() {
+//    TlsData* tls = tls_get_ptr();
+//    // Per-thread initialization of the TLS:
+//    if ((tls->defaultCtx == nullptr) && (g_deviceCnt > 0)) {
+//        tls->defaultCtx = ihipGetPrimaryCtx(0);
+//    }
+//    return tls->defaultCtx;
+//}
 
 hipError_t ihipSynchronize(void) {
+    GET_TLS();
     ihipGetTlsDefaultCtx()->locked_waitAllStreams();  // ignores non-blocking streams, this waits
                                                       // for all activity to finish.
 
     return (hipSuccess);
+}
+
+TlsData* tls_get_ptr() {
+    static thread_local TlsData data;
+    return &data;
 }
 
 //=================================================================================================
@@ -409,7 +418,7 @@ void ihipStream_t::lockclose_postKernelCommand(const char* kernelName, hc::accel
         for (auto o = g_hipLaunchBlockingKernels.begin(); o != g_hipLaunchBlockingKernels.end();
              o++) {
             if ((*o == kernelNameString)) {
-                // printf ("force blocking for kernel %s\n", o->c_str());
+                // std::printf ("force blocking for kernel %s\n", o->c_str());
                 blockThisKernel = true;
             }
         }
@@ -601,7 +610,7 @@ void ihipDevice_t::locked_reset() {
 
 void error_check(hsa_status_t hsa_error_code, int line_num, std::string str) {
     if ((hsa_error_code != HSA_STATUS_SUCCESS) && (hsa_error_code != HSA_STATUS_INFO_BREAK)) {
-        printf("HSA reported error!\n In file: %s\nAt line: %d\n", str.c_str(), line_num);
+        std::printf("HSA reported error!\n In file: %s\nAt line: %d\n", str.c_str(), line_num);
     }
 }
 
@@ -1435,6 +1444,7 @@ void ihipInit() {
 }
 
 hipError_t ihipStreamSynchronize(hipStream_t stream) {
+    GET_TLS();
     hipError_t e = hipSuccess;
 
     if (stream == hipStreamNull) {
@@ -1470,6 +1480,7 @@ void ihipStreamCallbackHandler(ihipStreamCallback_t* cb) {
 hipStream_t ihipSyncAndResolveStream(hipStream_t stream) {
     if (stream == hipStreamNull) {
         // Submitting to NULL stream, call locked_syncDefaultStream to wait for all other streams:
+        GET_TLS();
         ihipCtx_t* ctx = ihipGetTlsDefaultCtx();
         tprintf(DB_SYNC, "ihipSyncAndResolveStream %s wait on default stream\n",
                 ToString(stream).c_str());
@@ -1528,8 +1539,9 @@ void ihipPrintKernelLaunch(const char* kernelName, const grid_launch_parm* lp,
                            const hipStream_t stream) {
     if ((HIP_TRACE_API & (1 << TRACE_KCMD)) || HIP_PROFILE_API ||
         (COMPILE_HIP_DB & HIP_TRACE_API)) {
+        TlsData *tls = tls_get_ptr();
         std::stringstream os;
-        os << tls_tidInfo.tid() << "." << tls_tidInfo.apiSeqNum() << " hipLaunchKernel '"
+        os << tls->tidInfo.tid() << "." << tls->tidInfo.apiSeqNum() << " hipLaunchKernel '"
            << kernelName << "'"
            << " gridDim:" << lp->grid_dim << " groupDim:" << lp->group_dim << " sharedMem:+"
            << lp->dynamic_group_mem_bytes << " " << *stream;

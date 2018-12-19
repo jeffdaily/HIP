@@ -166,6 +166,7 @@ hipError_t hipConfigureCall(
   size_t sharedMem,
   hipStream_t stream)
 {
+  GET_TLS();
   auto ctx = ihipGetTlsDefaultCtx();
   LockedAccessor_CtxCrit_t crit(ctx->criticalData());
 
@@ -178,6 +179,7 @@ hipError_t hipSetupArgument(
   size_t size,
   size_t offset)
 {
+  GET_TLS();
   auto ctx = ihipGetTlsDefaultCtx();
   LockedAccessor_CtxCrit_t crit(ctx->criticalData());
   auto& arguments = crit->_execStack.top()._arguments;
@@ -192,6 +194,7 @@ hipError_t hipSetupArgument(
 
 hipError_t hipLaunchByPtr(const void *hostFunction)
 {
+  GET_TLS();
   ihipExec_t exec;
   {
     auto ctx = ihipGetTlsDefaultCtx();
