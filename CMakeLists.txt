@@ -206,6 +206,7 @@ if(HIP_PLATFORM STREQUAL "hcc")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${HIP_HCC_BUILD_FLAGS}")
 
     set(SOURCE_FILES_RUNTIME
+        src/hip_driver.cpp
         src/code_object_bundle.cpp
         src/hip_clang.cpp
         src/hip_hcc.cpp
