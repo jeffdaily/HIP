@@ -24,9 +24,12 @@ THE SOFTWARE.
 #define HIP_SRC_HU_INTERNAL_H
 
 #include <hc.hpp>
+#include <hsa/hsa.h>
+#include <hsa/hsa_ext_amd.h>
 
 #include "hip/hip_common.h"
 #include "hip/hip_driver.h"
+#include "env.h"
 
 #include <iostream>
 #include <iomanip>
@@ -107,6 +110,107 @@ template <typename T, typename... Args>
 inline std::string ToString(T first, Args... args) {
     return ToString(first) + ", " + ToString(args...);
 }
+
+//---
+// Environment variables:
+
+// Intended to distinguish whether an environment variable should be visible only in debug mode, or
+// in debug+release.
+// static const int debug = 0;
+extern const int release;
+
+// TODO - this blocks both kernels and memory ops.  Perhaps should have separate env var for
+// kernels?
+extern int HIP_LAUNCH_BLOCKING;
+extern int HIP_API_BLOCKING;
+
+extern int HIP_PRINT_ENV;
+extern int HIP_PROFILE_API;
+// extern int HIP_TRACE_API;
+extern int HIP_ATP;
+extern int HIP_DB;
+extern int HIP_STAGING_SIZE;    /* size of staging buffers, in KB */
+extern int HIP_STREAM_SIGNALS;  /* number of signals to allocate at stream creation */
+extern int HIP_VISIBLE_DEVICES; /* Contains a comma-separated sequence of GPU identifiers */
+extern int HIP_FORCE_P2P_HOST;
+
+extern int HIP_HOST_COHERENT;
+
+extern int HIP_HIDDEN_FREE_MEM;
+//---
+// Chicken bits for disabling functionality to work around potential issues:
+extern int HIP_SYNC_HOST_ALLOC;
+extern int HIP_SYNC_STREAM_WAIT;
+
+extern int HIP_SYNC_NULL_STREAM;
+extern int HIP_INIT_ALLOC;
+extern int HIP_FORCE_NULL_STREAM;
+
+extern int HIP_DUMP_CODE_OBJECT;
+
+// TODO - remove when this is standard behavior.
+extern int HCC_OPT_FLUSH;
+
+// Class to assign a short TID to each new thread, for HIP debugging purposes.
+class TidInfo {
+   public:
+    TidInfo();
+
+    int tid() const { return _shortTid; };
+    pid_t pid() const { return _pid; };
+    uint64_t incApiSeqNum() { return ++_apiSeqNum; };
+    uint64_t apiSeqNum() const { return _apiSeqNum; };
+
+   private:
+    int _shortTid;
+    pid_t _pid;
+
+    // monotonically increasing API sequence number for this threa.
+    uint64_t _apiSeqNum;
+};
+
+struct ThreadLocalData {
+    TidInfo tid;
+};
+
+struct ThreadLocalData* get_tls();
+
+#define HU_TLS() struct ThreadLocalData* tls = get_tls()
+
+// A macro to disallow the copy constructor and operator= functions
+// This is usually placed in the private: declarations for a class.
+#define HU_DISALLOW_COPY_AND_ASSIGN(TypeName) \
+  TypeName(const TypeName&) = delete;         \
+  void operator=(const TypeName&) = delete
+
+#ifdef _MSC_VER
+#define __thread __declspec(thread)
+#else
+#define __thread thread_local
+#endif
+
+// For POD types in TLS mode, s_obj_VAR is the thread-local variable.
+#define HU_STATIC_THREAD_LOCAL_POD(_Type_, _var_)               \
+  static __thread _Type_ s_obj_##_var_;                         \
+  namespace {                                                   \
+  class ThreadLocal_##_var_ {                                   \
+  public:                                                       \
+    ThreadLocal_##_var_() {}                                    \
+    void Init() {}                                              \
+    inline _Type_ *pointer() const {                            \
+      return &s_obj_##_var_;                                    \
+    }                                                           \
+    inline _Type_ *safe_pointer() const {                       \
+      return &s_obj_##_var_;                                    \
+    }                                                           \
+    _Type_ &get() const {                                       \
+      return s_obj_##_var_;                                     \
+    }                                                           \
+    bool is_native_tls() const { return true; }                 \
+  private:                                                      \
+    HU_DISALLOW_COPY_AND_ASSIGN(ThreadLocal_##_var_);           \
+  } _var_;                                                      \
+  }
 
 #define HU_INIT()
 #define HU_TRACE_API 1

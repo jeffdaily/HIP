@@ -1,5 +1,15 @@
 #include "hu_internal.h"
 
+namespace {
+
+HU_STATIC_THREAD_LOCAL_POD(ThreadLocalData, tls_data);
+
+struct ThreadLocalData* get_tls() {
+    return &tls_data.get();
+}
+
+} // namespace
+
 std::ostream& operator<<(std::ostream& os, const HUstream_st& s) {
 	return os;
 }
