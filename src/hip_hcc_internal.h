@@ -137,9 +137,13 @@ extern std::vector<ProfTrigger> g_dbStopTriggers;
 
 //---
 // Forward defs:
-class ihipStream_t;
+struct HUstream_st;
+typedef struct HUstream_st ihipStream_t;
 class ihipDevice_t;
-class ihipCtx_t;
+struct HUctx_st;
+typedef struct HUctx_st ihipCtx_t;
+struct HUevent_st;
+typedef struct HUevent_st ihipEvent_t;
 struct ihipEventData_t;
 
 // Color defs for debug messages:
@@ -533,14 +537,14 @@ typedef LockedAccessor<ihipStreamCritical_t> LockedAccessor_StreamCrit_t;
 
 //---
 // Internal stream structure.
-class ihipStream_t {
+struct HUstream_st {
    public:
     enum ScheduleMode { Auto, Spin, Yield };
     typedef uint64_t SeqNum_t;
 
     // TODOD -make av a reference to avoid shared_ptr overhead?
-    ihipStream_t(ihipCtx_t* ctx, hc::accelerator_view av, unsigned int flags);
-    ~ihipStream_t();
+    HUstream_st(ihipCtx_t* ctx, hc::accelerator_view av, unsigned int flags);
+    ~HUstream_st();
 
     // kind is hipMemcpyKind
     void locked_copySync(void* dst, const void* src, size_t sizeBytes, unsigned kind,
@@ -632,7 +636,7 @@ class ihipStream_t {
     ihipCtx_t* _ctx;  // parent context that owns this stream.
 
     // Friends:
-    friend std::ostream& operator<<(std::ostream& os, const ihipStream_t& s);
+    friend std::ostream& operator<<(std::ostream& os, const HUstream_st& s);
     friend hipError_t hipStreamQuery(hipStream_t);
 
     ScheduleMode _scheduleMode;
@@ -714,9 +718,9 @@ typedef ihipEventCriticalBase_t<EventMutex> ihipEventCritical_t;
 typedef LockedAccessor<ihipEventCritical_t> LockedAccessor_EventCrit_t;
 
 // internal hip event structure.
-class ihipEvent_t {
+struct HUevent_st {
    public:
-    explicit ihipEvent_t(unsigned flags);
+    explicit HUevent_st(unsigned flags);
     void attachToCompletionFuture(const hc::completion_future* cf, hipStream_t stream,
                                   ihipEventType_t eventType);
     std::pair<hipEventStatus_t, uint64_t> refreshEventStatus();  // returns pair <state, timestamp>
@@ -894,11 +898,11 @@ typedef LockedAccessor<ihipCtxCritical_t> LockedAccessor_CtxCrit_t;
 // peer-to-peer mappings, creation flags.  Multiple contexts can point to the same
 // device.
 //
-class ihipCtx_t {
+struct HUctx_st {
    public:  // Functions:
-    ihipCtx_t(ihipDevice_t* device, unsigned deviceCnt,
+    HUctx_st(ihipDevice_t* device, unsigned deviceCnt,
               unsigned flags);  // note: calls constructor for _criticalData
-    ~ihipCtx_t();
+    ~HUctx_st();
 
     // Functions which read or write the critical data are named locked_.
     // (might be better called "locking_"

@@ -10,10 +10,6 @@ struct ThreadLocalData* get_tls() {
 
 } // namespace
 
-std::ostream& operator<<(std::ostream& os, const HUstream_st& s) {
-	return os;
-}
-
 std::ostream& operator<<(std::ostream& os, const HUipcEventHandle_st& s) {
 	return os;
 }

@@ -30,11 +30,11 @@ THE SOFTWARE.
 //---
 
 
-ihipEvent_t::ihipEvent_t(unsigned flags) : _criticalData(this) { _flags = flags; };
+HUevent_st::HUevent_st(unsigned flags) : _criticalData(this) { _flags = flags; };
 
 
 // Attach to an existing completion future:
-void ihipEvent_t::attachToCompletionFuture(const hc::completion_future* cf, hipStream_t stream,
+void HUevent_st::attachToCompletionFuture(const hc::completion_future* cf, hipStream_t stream,
                                            ihipEventType_t eventType) {
     LockedAccessor_EventCrit_t crit(_criticalData);
     crit->_eventData.marker(*cf);
@@ -44,7 +44,7 @@ void ihipEvent_t::attachToCompletionFuture(const hc::completion_future* cf, hipS
 }
 
 
-std::pair<hipEventStatus_t, uint64_t> ihipEvent_t::refreshEventStatus() {
+std::pair<hipEventStatus_t, uint64_t> HUevent_st::refreshEventStatus() {
     auto ecd = locked_copyCrit();
     if (ecd._state == hipEventStatusRecording) {
         bool isReady1 = ecd._stream->locked_eventIsReady(this);

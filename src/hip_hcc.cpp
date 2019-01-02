@@ -254,7 +254,7 @@ TidInfo::TidInfo() : _apiSeqNum(0) {
 // ihipStream_t:
 //=================================================================================================
 //---
-ihipStream_t::ihipStream_t(ihipCtx_t* ctx, hc::accelerator_view av, unsigned int flags)
+HUstream_st::HUstream_st(ihipCtx_t* ctx, hc::accelerator_view av, unsigned int flags)
     : _id(0),  // will be set by add function.
       _flags(flags),
       _ctx(ctx),
@@ -281,10 +281,10 @@ ihipStream_t::ihipStream_t(ihipCtx_t* ctx, hc::accelerator_view av, unsigned int
 
 
 //---
-ihipStream_t::~ihipStream_t() {}
+HUstream_st::~HUstream_st() {}
 
 
-hc::hcWaitMode ihipStream_t::waitMode() const {
+hc::hcWaitMode HUstream_st::waitMode() const {
     hc::hcWaitMode waitMode = hc::hcWaitModeActive;
 
     if (_scheduleMode == Auto) {
@@ -312,7 +312,7 @@ hc::hcWaitMode ihipStream_t::waitMode() const {
 
 // Wait for all kernel and data copy commands in this stream to complete.
 // This signature should be used in routines that already have locked the stream mutex
-void ihipStream_t::wait(LockedAccessor_StreamCrit_t& crit) {
+void HUstream_st::wait(LockedAccessor_StreamCrit_t& crit) {
     tprintf(DB_SYNC, "%s wait for queue-empty..\n", ToString(this).c_str());
 
     crit->_av.wait(waitMode());
@@ -322,7 +322,7 @@ void ihipStream_t::wait(LockedAccessor_StreamCrit_t& crit) {
 
 //---
 // Wait for all kernel and data copy commands in this stream to complete.
-void ihipStream_t::locked_wait() {
+void HUstream_st::locked_wait() {
     LockedAccessor_StreamCrit_t crit(_criticalData);
 
     wait(crit);
@@ -330,7 +330,7 @@ void ihipStream_t::locked_wait() {
 
 // Causes current stream to wait for specified event to complete:
 // Note this does not provide any kind of host serialization.
-void ihipStream_t::locked_streamWaitEvent(ihipEventData_t& ecd) {
+void HUstream_st::locked_streamWaitEvent(ihipEventData_t& ecd) {
     LockedAccessor_StreamCrit_t crit(_criticalData);
 
     crit->_av.create_blocking_marker(ecd.marker(), hc::accelerator_scope);
@@ -339,7 +339,7 @@ void ihipStream_t::locked_streamWaitEvent(ihipEventData_t& ecd) {
 
 // Causes current stream to wait for specified event to complete:
 // Note this does not provide any kind of host serialization.
-bool ihipStream_t::locked_eventIsReady(hipEvent_t event) {
+bool HUstream_st::locked_eventIsReady(hipEvent_t event) {
     // Event query that returns "Complete" may cause HCC to manipulate
     // internal queue state so lock the stream's queue here.
     LockedAccessor_StreamCrit_t scrit(_criticalData);
@@ -350,7 +350,7 @@ bool ihipStream_t::locked_eventIsReady(hipEvent_t event) {
 }
 
 // Waiting on event can cause HCC to reclaim stream resources - so need to lock the stream.
-void ihipStream_t::locked_eventWaitComplete(hc::completion_future& marker,
+void HUstream_st::locked_eventWaitComplete(hc::completion_future& marker,
                                             hc::hcWaitMode waitMode) {
     LockedAccessor_StreamCrit_t crit(_criticalData);
 
@@ -360,7 +360,7 @@ void ihipStream_t::locked_eventWaitComplete(hc::completion_future& marker,
 
 // Create a marker in this stream.
 // Save state in the event so it can track the status of the event.
-hc::completion_future ihipStream_t::locked_recordEvent(hipEvent_t event) {
+hc::completion_future HUstream_st::locked_recordEvent(hipEvent_t event) {
     // Lock the stream to prevent simultaneous access
     LockedAccessor_StreamCrit_t crit(_criticalData);
 
@@ -385,15 +385,15 @@ hc::completion_future ihipStream_t::locked_recordEvent(hipEvent_t event) {
 
 
 //---
-const ihipDevice_t* ihipStream_t::getDevice() const { return _ctx->getDevice(); };
+const ihipDevice_t* HUstream_st::getDevice() const { return _ctx->getDevice(); };
 
 
-ihipCtx_t* ihipStream_t::getCtx() const { return _ctx; };
+ihipCtx_t* HUstream_st::getCtx() const { return _ctx; };
 
 
 //--
 // Lock the stream to prevent other threads from intervening.
-LockedAccessor_StreamCrit_t ihipStream_t::lockopen_preKernelCommand() {
+LockedAccessor_StreamCrit_t HUstream_st::lockopen_preKernelCommand() {
     LockedAccessor_StreamCrit_t crit(_criticalData, false /*no unlock at destruction*/);
 
 
@@ -404,7 +404,7 @@ LockedAccessor_StreamCrit_t ihipStream_t::lockopen_preKernelCommand() {
 //---
 // Must be called after kernel finishes, this releases the lock on the stream so other commands can
 // submit.
-void ihipStream_t::lockclose_postKernelCommand(const char* kernelName, hc::accelerator_view* av) {
+void HUstream_st::lockclose_postKernelCommand(const char* kernelName, hc::accelerator_view* av) {
     bool blockThisKernel = false;
 
     if (!g_hipLaunchBlockingKernels.empty()) {
@@ -917,7 +917,7 @@ hipError_t ihipDevice_t::initProperties(hipDeviceProp_t* prop) {
 //=================================================================================================
 // ihipCtx_t
 //=================================================================================================
-ihipCtx_t::ihipCtx_t(ihipDevice_t* device, unsigned deviceCnt, unsigned flags)
+HUctx_st::HUctx_st(ihipDevice_t* device, unsigned deviceCnt, unsigned flags)
     : _ctxFlags(flags), _device(device), _criticalData(this, deviceCnt) {
     // locked_reset();
     LockedAccessor_CtxCrit_t crit(_criticalData);
@@ -932,7 +932,7 @@ ihipCtx_t::ihipCtx_t(ihipDevice_t* device, unsigned deviceCnt, unsigned flags)
 };
 
 
-ihipCtx_t::~ihipCtx_t() {
+HUctx_st::~HUctx_st() {
     if (_defaultStream) {
         delete _defaultStream;
         _defaultStream = NULL;
@@ -940,7 +940,7 @@ ihipCtx_t::~ihipCtx_t() {
 }
 // Reset the device - this is called from hipDeviceReset.
 // Device may be reset multiple times, and may be reset after init.
-void ihipCtx_t::locked_reset() {
+void HUctx_st::locked_reset() {
     // Obtain mutex access to the device critical data, release by destructor
     LockedAccessor_CtxCrit_t crit(_criticalData);
 
@@ -982,7 +982,7 @@ void ihipCtx_t::locked_reset() {
 
 
 //---
-std::string ihipCtx_t::toString() const {
+std::string HUctx_st::toString() const {
     std::ostringstream ss;
     ss << this;
     return ss.str();
@@ -1012,7 +1012,7 @@ std::string ihipCtx_t::toString() const {
 //
 //   syncToHost causes host to wait for the stream to finish.
 //   Note HIP_SYNC_NULL_STREAM=1 path always sync to Host.
-void ihipCtx_t::locked_syncDefaultStream(bool waitOnSelf, bool syncHost) {
+void HUctx_st::locked_syncDefaultStream(bool waitOnSelf, bool syncHost) {
     LockedAccessor_CtxCrit_t crit(_criticalData);
 
     tprintf(DB_SYNC, "syncDefaultStream \n");
@@ -1068,7 +1068,7 @@ void ihipCtx_t::locked_syncDefaultStream(bool waitOnSelf, bool syncHost) {
 
 
 //---
-void ihipCtx_t::locked_removeStream(ihipStream_t* s) {
+void HUctx_st::locked_removeStream(ihipStream_t* s) {
     LockedAccessor_CtxCrit_t crit(_criticalData);
 
     crit->streams().remove(s);
@@ -1077,7 +1077,7 @@ void ihipCtx_t::locked_removeStream(ihipStream_t* s) {
 
 //---
 // Heavyweight synchronization that waits on all streams, ignoring hipStreamNonBlocking flag.
-void ihipCtx_t::locked_waitAllStreams() {
+void HUctx_st::locked_waitAllStreams() {
     LockedAccessor_CtxCrit_t crit(_criticalData);
 
     tprintf(DB_SYNC, "waitAllStream\n");
@@ -1803,7 +1803,7 @@ const char* ihipErrorString(hipError_t hip_error) {
 // Returns true if copyEngineCtx can see the memory allocated on dstCtx and srcCtx.
 // The peer-list for a context controls which contexts have access to the memory allocated on that
 // context. So we check dstCtx's and srcCtx's peerList to see if the both include thisCtx.
-bool ihipStream_t::canSeeMemory(const ihipCtx_t* copyEngineCtx, const hc::AmPointerInfo* dstPtrInfo,
+bool HUstream_st::canSeeMemory(const ihipCtx_t* copyEngineCtx, const hc::AmPointerInfo* dstPtrInfo,
                                 const hc::AmPointerInfo* srcPtrInfo) {
     if (copyEngineCtx == nullptr) {
         return false;
@@ -1893,7 +1893,7 @@ const char* hcMemcpyStr(hc::hcCommandKind memKind) {
 
 
 // Resolve hipMemcpyDefault to a known type.
-unsigned ihipStream_t::resolveMemcpyDirection(bool srcInDeviceMem, bool dstInDeviceMem) {
+unsigned HUstream_st::resolveMemcpyDirection(bool srcInDeviceMem, bool dstInDeviceMem) {
     hipMemcpyKind kind = hipMemcpyDefault;
 
     if (srcInDeviceMem && dstInDeviceMem) {
@@ -1915,7 +1915,7 @@ unsigned ihipStream_t::resolveMemcpyDirection(bool srcInDeviceMem, bool dstInDev
 
 
 // hipMemKind must be "resolved" to a specific direction - cannot be default.
-void ihipStream_t::resolveHcMemcpyDirection(unsigned hipMemKind,
+void HUstream_st::resolveHcMemcpyDirection(unsigned hipMemKind,
                                             const hc::AmPointerInfo* dstPtrInfo,
                                             const hc::AmPointerInfo* srcPtrInfo,
                                             hc::hcCommandKind* hcCopyDir, ihipCtx_t** copyDevice,
@@ -2059,7 +2059,7 @@ bool getTailoredPtrInfo(const char* tag, hc::AmPointerInfo* ptrInfo, const void*
 // query the peer status for the pointer.
 //
 // TODO - remove kind parm from here or use it below?
-void ihipStream_t::locked_copySync(void* dst, const void* src, size_t sizeBytes, unsigned kind,
+void HUstream_st::locked_copySync(void* dst, const void* src, size_t sizeBytes, unsigned kind,
                                    bool resolveOn) {
     ihipCtx_t* ctx = this->getCtx();
     const ihipDevice_t* device = ctx->getDevice();
@@ -2114,7 +2114,7 @@ void ihipStream_t::locked_copySync(void* dst, const void* src, size_t sizeBytes,
     }
 }
 
-void ihipStream_t::locked_copy2DSync(void* dst, const void* src, size_t width, size_t height, size_t srcPitch, size_t dstPitch, unsigned kind,
+void HUstream_st::locked_copy2DSync(void* dst, const void* src, size_t width, size_t height, size_t srcPitch, size_t dstPitch, unsigned kind,
                                    bool resolveOn) {
     ihipCtx_t* ctx = this->getCtx();
     const ihipDevice_t* device = ctx->getDevice();
@@ -2167,7 +2167,7 @@ void ihipStream_t::locked_copy2DSync(void* dst, const void* src, size_t width, s
     }
 }
 
-void ihipStream_t::addSymbolPtrToTracker(hc::accelerator& acc, void* ptr, size_t sizeBytes) {
+void HUstream_st::addSymbolPtrToTracker(hc::accelerator& acc, void* ptr, size_t sizeBytes) {
 #if (__hcc_workweek__ >= 17332)
     hc::AmPointerInfo ptrInfo(NULL, ptr, ptr, sizeBytes, acc, true, false);
 #else
@@ -2176,7 +2176,7 @@ void ihipStream_t::addSymbolPtrToTracker(hc::accelerator& acc, void* ptr, size_t
     hc::am_memtracker_add(ptr, ptrInfo);
 }
 
-void ihipStream_t::lockedSymbolCopySync(hc::accelerator& acc, void* dst, void* src,
+void HUstream_st::lockedSymbolCopySync(hc::accelerator& acc, void* dst, void* src,
                                         size_t sizeBytes, size_t offset, unsigned kind) {
     if (kind == hipMemcpyHostToHost) {
         acc.memcpy_symbol(dst, (void*)src, sizeBytes, offset, Kalmar::hcMemcpyHostToHost);
@@ -2192,7 +2192,7 @@ void ihipStream_t::lockedSymbolCopySync(hc::accelerator& acc, void* dst, void* s
     }
 }
 
-void ihipStream_t::lockedSymbolCopyAsync(hc::accelerator& acc, void* dst, void* src,
+void HUstream_st::lockedSymbolCopyAsync(hc::accelerator& acc, void* dst, void* src,
                                          size_t sizeBytes, size_t offset, unsigned kind) {
     // TODO - review - this looks broken , should not be adding pointers to tracker dynamically:
     if (kind == hipMemcpyHostToDevice) {
@@ -2231,7 +2231,7 @@ void ihipStream_t::lockedSymbolCopyAsync(hc::accelerator& acc, void* dst, void* 
 }
 
 
-void ihipStream_t::locked_copyAsync(void* dst, const void* src, size_t sizeBytes, unsigned kind) {
+void HUstream_st::locked_copyAsync(void* dst, const void* src, size_t sizeBytes, unsigned kind) {
     const ihipCtx_t* ctx = this->getCtx();
 
     if ((ctx == nullptr) || (ctx->getDevice() == nullptr)) {
@@ -2337,7 +2337,7 @@ void ihipStream_t::locked_copyAsync(void* dst, const void* src, size_t sizeBytes
     }
 }
 
-void ihipStream_t::locked_copy2DAsync(void* dst, const void* src, size_t width, size_t height, size_t srcPitch, size_t dstPitch, unsigned kind)
+void HUstream_st::locked_copy2DAsync(void* dst, const void* src, size_t width, size_t height, size_t srcPitch, size_t dstPitch, unsigned kind)
 {
     const ihipCtx_t* ctx = this->getCtx();
 

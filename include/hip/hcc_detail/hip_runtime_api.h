@@ -66,12 +66,12 @@ extern "C" {
 
 //---
 // API-visible structures
-typedef struct ihipCtx_t* hipCtx_t;
+typedef struct HUctx_st* hipCtx_t;
 
 // Note many APIs also use integer deviceIds as an alternative to the device pointer:
 typedef int hipDevice_t;
 
-typedef struct ihipStream_t* hipStream_t;
+typedef struct HUstream_st* hipStream_t;
 
 // TODO: IPC implementation
 
@@ -107,7 +107,7 @@ typedef struct hipFuncAttributes {
     size_t sharedSizeBytes;
 } hipFuncAttributes;
 
-typedef struct ihipEvent_t* hipEvent_t;
+typedef struct HUevent_st* hipEvent_t;
 
 enum hipLimit_t {
     hipLimitMallocHeapSize = 0x02,
