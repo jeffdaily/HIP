@@ -54,14 +54,14 @@ hipError_t hipCreateSurfaceObject(hipSurfaceObject_t* pSurfObject,
 
         switch (pResDesc->resType) {
             case hipResourceTypeArray:
-                pSurface->array = pResDesc->res.array.array;
+                pSurface->array = pResDesc->res.array.hArray;
                 break;
             default:
                 break;
         }
         unsigned int* surfObj;
         hipMalloc((void**)&surfObj, sizeof(hipArray));
-        hipMemcpy(surfObj, (void*)pResDesc->res.array.array, sizeof(hipArray),
+        hipMemcpy(surfObj, (void*)pResDesc->res.array.hArray, sizeof(hipArray),
                   hipMemcpyHostToDevice);
         *pSurfObject = (hipSurfaceObject_t)surfObj;
         surfaceHash[*pSurfObject] = pSurface;

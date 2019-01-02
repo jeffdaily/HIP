@@ -84,7 +84,7 @@ typedef struct textureReference {
 
     hipTextureObject_t textureObject;
     int numChannels;
-    enum hipArray_Format format;
+    hipArray_Format format;
 }textureReference;
 
 /**

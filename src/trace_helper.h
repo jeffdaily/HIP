@@ -51,18 +51,6 @@ inline std::string ToHexString(T v) {
 };
 
 
-//---
-// Template overloads for ToString to handle specific types
-
-// This is the default which works for most types:
-template <typename T>
-inline std::string ToString(T v) {
-    std::ostringstream ss;
-    ss << v;
-    return ss.str();
-};
-
-
 //  hipEvent_t specialization. TODO - maybe add an event ID for debug?
 template <>
 inline std::string ToString(hipEvent_t v) {

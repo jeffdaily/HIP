@@ -1758,7 +1758,7 @@ hipError_t hipMemcpyHtoA(hipArray* dstArray, size_t dstOffset, const void* srcHo
  *  @see hipMemcpy, hipMemcpy2DToArray, hipMemcpy2D, hipMemcpyFromArray, hipMemcpyToSymbol,
  * hipMemcpyAsync
  */
-hipError_t hipMemcpy3D(const struct hipMemcpy3DParms* p);
+hipError_t hipMemcpy3D(const hipMemcpy3DParms* p);
 
 // doxygen end Memory
 /**

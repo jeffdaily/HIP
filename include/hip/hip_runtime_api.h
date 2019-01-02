@@ -33,13 +33,7 @@ THE SOFTWARE.
 
 #include <string.h>  // for getDeviceProp
 #include <hip/hip_common.h>
-
-enum {
-    HIP_SUCCESS = 0,
-    HIP_ERROR_INVALID_VALUE,
-    HIP_ERROR_NOT_INITIALIZED,
-    HIP_ERROR_LAUNCH_OUT_OF_RESOURCES
-};
+#include <hip/hip_driver.h>
 
 typedef struct {
     // 32-bit Atomics

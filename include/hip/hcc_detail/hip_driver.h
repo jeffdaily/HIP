@@ -92,6 +92,7 @@ typedef uint64_t huuint64_t;
 extern "C" {
 #endif
 
+#if 0
 /**
  * HIP device pointer
  * HUdeviceptr is defined as an unsigned integer type whose size matches the size of a pointer on the target platform.
@@ -100,6 +101,9 @@ extern "C" {
 typedef unsigned long long HUdeviceptr;
 #else
 typedef unsigned int HUdeviceptr;
+#endif
+#else
+typedef void* HUdeviceptr;
 #endif
 
 typedef int HUdevice;                                     /**< HIP device */

@@ -29,7 +29,7 @@ void saveTextureInfo(const hipTexture* pTexture, const hipResourceDesc* pResDesc
     }
 }
 
-void getDrvChannelOrderAndType(const enum hipArray_Format Format, unsigned int NumChannels,
+void getDrvChannelOrderAndType(const hipArray_Format Format, unsigned int NumChannels,
                                hsa_ext_image_channel_order_t* channelOrder,
                                hsa_ext_image_channel_type_t* channelType) {
     switch (Format) {
@@ -225,18 +225,18 @@ hipError_t hipCreateTextureObject(hipTextureObject_t* pTexObject, const hipResou
 
         switch (pResDesc->resType) {
             case hipResourceTypeArray:
-                devPtr = pResDesc->res.array.array->data;
-                imageDescriptor.width = pResDesc->res.array.array->width;
-                imageDescriptor.height = pResDesc->res.array.array->height;
-                switch (pResDesc->res.array.array->type) {
+                devPtr = pResDesc->res.array.hArray->data;
+                imageDescriptor.width = pResDesc->res.array.hArray->width;
+                imageDescriptor.height = pResDesc->res.array.hArray->height;
+                switch (pResDesc->res.array.hArray->type) {
                     case hipArrayLayered:
                         imageDescriptor.geometry = HSA_EXT_IMAGE_GEOMETRY_2DA;
                         imageDescriptor.depth = 0;
-                        imageDescriptor.array_size = pResDesc->res.array.array->depth;
+                        imageDescriptor.array_size = pResDesc->res.array.hArray->depth;
                         break;
                     case hipArrayCubemap:
                         imageDescriptor.geometry = HSA_EXT_IMAGE_GEOMETRY_3D;
-                        imageDescriptor.depth = pResDesc->res.array.array->depth;
+                        imageDescriptor.depth = pResDesc->res.array.hArray->depth;
                         imageDescriptor.array_size = 0;
                         break;
                     case hipArraySurfaceLoadStore:
@@ -248,21 +248,22 @@ hipError_t hipCreateTextureObject(hipTextureObject_t* pTexObject, const hipResou
                         imageDescriptor.array_size = 0;
                         break;
                 }
-                getChannelOrderAndType(pResDesc->res.array.array->desc, pTexDesc->readMode,
+                getChannelOrderAndType(pResDesc->res.array.hArray->desc, pTexDesc->readMode,
                                        &channelOrder, &channelType);
                 break;
             case hipResourceTypeMipmappedArray:
-                devPtr = pResDesc->res.mipmap.mipmap->data;
-                imageDescriptor.width = pResDesc->res.mipmap.mipmap->width;
-                imageDescriptor.height = pResDesc->res.mipmap.mipmap->height;
-                imageDescriptor.depth = pResDesc->res.mipmap.mipmap->depth;
+                devPtr = pResDesc->res.mipmap.hMipmappedArray->data;
+                imageDescriptor.width = pResDesc->res.mipmap.hMipmappedArray->width;
+                imageDescriptor.height = pResDesc->res.mipmap.hMipmappedArray->height;
+                imageDescriptor.depth = pResDesc->res.mipmap.hMipmappedArray->depth;
                 imageDescriptor.array_size = 0;
                 imageDescriptor.geometry = HSA_EXT_IMAGE_GEOMETRY_2D;
-                getChannelOrderAndType(pResDesc->res.mipmap.mipmap->desc, pTexDesc->readMode,
+                getChannelOrderAndType(pResDesc->res.mipmap.hMipmappedArray->desc, pTexDesc->readMode,
                                        &channelOrder, &channelType);
                 break;
             case hipResourceTypeLinear:
                 devPtr = pResDesc->res.linear.devPtr;
+#if HIP_USE_ORIGINAL_TYPES
                 imageDescriptor.width = pResDesc->res.linear.sizeInBytes/((pResDesc->res.linear.desc.x + pResDesc->res.linear.desc.y + pResDesc->res.linear.desc.z + pResDesc->res.linear.desc.w)/8);
                 imageDescriptor.height = 1;
                 imageDescriptor.depth = 0;
@@ -271,6 +272,17 @@ hipError_t hipCreateTextureObject(hipTextureObject_t* pTexObject, const hipResou
                     HSA_EXT_IMAGE_GEOMETRY_1D;  // ? HSA_EXT_IMAGE_DATA_LAYOUT_LINEAR
                 getChannelOrderAndType(pResDesc->res.linear.desc, pTexDesc->readMode, &channelOrder,
                                        &channelType);
+#else
+                imageDescriptor.width = pResDesc->res.linear.sizeInBytes;
+                imageDescriptor.height = 1;
+                imageDescriptor.depth = 0;
+                imageDescriptor.array_size = 0;
+                imageDescriptor.geometry =
+                    HSA_EXT_IMAGE_GEOMETRY_1D;  // ? HSA_EXT_IMAGE_DATA_LAYOUT_LINEAR
+                getDrvChannelOrderAndType(pResDesc->res.linear.format,
+                                          pResDesc->res.linear.numChannels,
+                                          &channelOrder, &channelType);
+#endif
                 break;
             case hipResourceTypePitch2D:
                 devPtr = pResDesc->res.pitch2D.devPtr;
@@ -279,8 +291,14 @@ hipError_t hipCreateTextureObject(hipTextureObject_t* pTexObject, const hipResou
                 imageDescriptor.depth = 0;
                 imageDescriptor.array_size = 0;
                 imageDescriptor.geometry = HSA_EXT_IMAGE_GEOMETRY_2D;
+#if HIP_USE_ORIGINAL_TYPES
                 getChannelOrderAndType(pResDesc->res.pitch2D.desc, pTexDesc->readMode,
                                        &channelOrder, &channelType);
+#else
+                getDrvChannelOrderAndType(pResDesc->res.pitch2D.format,
+                                          pResDesc->res.pitch2D.numChannels,
+                                          &channelOrder, &channelType);
+#endif
                 break;
             default:
                 break;
@@ -584,8 +602,13 @@ hipError_t ihipBindTextureToArrayImpl(int dim, enum hipTextureReadMode readMode,
         hsa_ext_image_channel_order_t channelOrder;
         hsa_ext_image_channel_type_t channelType;
         if (array->isDrv) {
+            /* TODO */
+#if 0
             getDrvChannelOrderAndType(array->drvDesc.format, array->drvDesc.numChannels,
                                       &channelOrder, &channelType);
+#else
+            return hipErrorRuntimeOther;
+#endif
         } else {
             getChannelOrderAndType(desc, readMode, &channelOrder, &channelType);
         }
@@ -749,6 +772,6 @@ hipError_t hipTexRefSetAddress2D(textureReference* tex, const HIP_ARRAY_DESCRIPT
     hipError_t hip_status = hipSuccess;
     // TODO: hipReadModeElementType is default.
     hip_status = ihipBindTexture2DImpl(hipTextureType2D, hipReadModeElementType, &offset, devPtr,
-                                       NULL, desc->width, desc->height, tex);
+                                       NULL, desc->Width, desc->Height, tex);
     return ihipLogStatus(hip_status);
 }

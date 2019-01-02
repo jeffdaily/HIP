@@ -27,21 +27,11 @@ THE SOFTWARE.
 #include <stdbool.h>
 #endif
 
-typedef void* hipDeviceptr_t;
-typedef enum hipChannelFormatKind {
-    hipChannelFormatKindSigned = 0,
-    hipChannelFormatKindUnsigned = 1,
-    hipChannelFormatKindFloat = 2,
-    hipChannelFormatKindNone = 3
-}hipChannelFormatKind;
+#if HIP_USE_ORIGINAL_TYPES
 
-typedef struct hipChannelFormatDesc {
-    int x;
-    int y;
-    int z;
-    int w;
-    enum hipChannelFormatKind f;
-}hipChannelFormatDesc;
+#include "runtime_types.h"
+
+typedef void* hipDeviceptr_t;
 
 #define HIP_TRSF_NORMALIZED_COORDINATES 0x01
 #define HIP_TRSF_READ_AS_INTEGER 0x00
@@ -58,14 +48,16 @@ typedef enum hipArray_Format {
     HIP_AD_FORMAT_FLOAT = 0x20
 }hipArray_Format;
 
-typedef struct HIP_ARRAY_DESCRIPTOR {
-    enum hipArray_Format format;
-    unsigned int numChannels;
-    size_t width;
-    size_t height;
-    unsigned int flags;
-    size_t depth;
-}HIP_ARRAY_DESCRIPTOR;
+typedef struct HIP_ARRAY_DESCRIPTOR_st_orig {
+    hipArray_Format Format;
+    unsigned int NumChannels;
+    size_t Width;
+    size_t Height;
+    unsigned int Flags;
+    size_t Depth;
+}HIP_ARRAY_DESCRIPTOR_orig;
+#define HIP_ARRAY_DESCRIPTOR HIP_ARRAY_DESCRIPTOR_orig
+#define HIP_ARRAY3D_DESCRIPTOR HIP_ARRAY_DESCRIPTOR_orig
 
 typedef struct hipArray {
     void* data;  // FIXME: generalize this
@@ -74,22 +66,26 @@ typedef struct hipArray {
     unsigned int width;
     unsigned int height;
     unsigned int depth;
-    struct HIP_ARRAY_DESCRIPTOR drvDesc;
+    HIP_ARRAY_DESCRIPTOR drvDesc;
     bool isDrv;
     unsigned int textureType;
 }hipArray;
 
+typedef struct hipArray* hipArray_t;
+
+typedef const struct hipArray* hipArray_const_t;
+
 typedef struct hip_Memcpy2D {
-    size_t height;
-    size_t widthInBytes;
-    hipArray* dstArray;
+    size_t Height;
+    size_t WidthInBytes;
+    hipArray_t dstArray;
     hipDeviceptr_t dstDevice;
     void* dstHost;
     hipMemoryType dstMemoryType;
     size_t dstPitch;
     size_t dstXInBytes;
     size_t dstY;
-    hipArray* srcArray;
+    hipArray_t srcArray;
     hipDeviceptr_t srcDevice;
     const void* srcHost;
     hipMemoryType srcMemoryType;
@@ -98,10 +94,6 @@ typedef struct hip_Memcpy2D {
     size_t srcY;
 } hip_Memcpy2D;
 
-
-typedef struct hipArray* hipArray_t;
-
-typedef const struct hipArray* hipArray_const_t;
 
 // TODO: It needs to be modified since it was just copied from hipArray.
 struct hipMipmappedArray {
@@ -175,10 +167,10 @@ typedef struct hipResourceDesc {
 
     union {
         struct {
-            hipArray_t array;
+            hipArray_t hArray;
         } array;
         struct {
-            hipMipmappedArray_t mipmap;
+            hipMipmappedArray_t hMipmappedArray;
         } mipmap;
         struct {
             void* devPtr;
@@ -209,39 +201,6 @@ struct hipResourceViewDesc {
     unsigned int lastLayer;
 };
 
-/**
- * Memory copy types
- *
- */
-typedef enum hipMemcpyKind {
-    hipMemcpyHostToHost = 0,      ///< Host-to-Host Copy
-    hipMemcpyHostToDevice = 1,    ///< Host-to-Device Copy
-    hipMemcpyDeviceToHost = 2,    ///< Device-to-Host Copy
-    hipMemcpyDeviceToDevice = 3,  ///< Device-to-Device Copy
-    hipMemcpyDefault =
-        4  ///< Runtime will automatically determine copy-kind based on virtual addresses.
-} hipMemcpyKind;
-
-typedef struct hipPitchedPtr {
-    void* ptr;
-    size_t pitch;
-    size_t xsize;
-    size_t ysize;
-}hipPitchedPtr;
-
-typedef struct hipExtent {
-    size_t width;  // Width in elements when referring to array memory, in bytes when referring to
-                   // linear memory
-    size_t height;
-    size_t depth;
-}hipExtent;
-
-typedef struct hipPos {
-    size_t x;
-    size_t y;
-    size_t z;
-}hipPos;
-
 typedef struct hipMemcpy3DParms {
     hipArray_t srcArray;
     struct hipPos srcPos;
@@ -252,7 +211,7 @@ typedef struct hipMemcpy3DParms {
     struct hipPitchedPtr dstPtr;
 
     struct hipExtent extent;
-    enum hipMemcpyKind kind;
+    int kind;
 
     size_t Depth;
     size_t Height;
@@ -279,36 +238,99 @@ typedef struct hipMemcpy3DParms {
     size_t srcZ;
 }hipMemcpy3DParms;
 
-static __inline__ struct hipPitchedPtr make_hipPitchedPtr(void* d, size_t p, size_t xsz,
-                                                          size_t ysz) {
-    struct hipPitchedPtr s;
+#else
 
-    s.ptr = d;
-    s.pitch = p;
-    s.xsize = xsz;
-    s.ysize = ysz;
+#include "hip_driver.h"
 
-    return s;
-}
+#include "runtime_types.h"
 
-static __inline__ struct hipPos make_hipPos(size_t x, size_t y, size_t z) {
-    struct hipPos p;
+typedef HUdeviceptr hipDeviceptr_t;
 
-    p.x = x;
-    p.y = y;
-    p.z = z;
+#define HIP_AD_FORMAT_UNSIGNED_INT8   HU_AD_FORMAT_UNSIGNED_INT8
+#define HIP_AD_FORMAT_UNSIGNED_INT16  HU_AD_FORMAT_UNSIGNED_INT16
+#define HIP_AD_FORMAT_UNSIGNED_INT32  HU_AD_FORMAT_UNSIGNED_INT32
+#define HIP_AD_FORMAT_SIGNED_INT8     HU_AD_FORMAT_SIGNED_INT8
+#define HIP_AD_FORMAT_SIGNED_INT16    HU_AD_FORMAT_SIGNED_INT16
+#define HIP_AD_FORMAT_SIGNED_INT32    HU_AD_FORMAT_SIGNED_INT32
+#define HIP_AD_FORMAT_HALF            HU_AD_FORMAT_HALF
+#define HIP_AD_FORMAT_FLOAT           HU_AD_FORMAT_FLOAT
+typedef HUarray_format hipArray_Format;
 
-    return p;
-}
+typedef struct HUarray_st {
+    void* data;  // FIXME: generalize this
+    struct hipChannelFormatDesc desc;
+    unsigned int type;
+    unsigned int width;
+    unsigned int height;
+    unsigned int depth;
+    HIP_ARRAY3D_DESCRIPTOR drvDesc;
+    bool isDrv;
+    unsigned int textureType;
+} HUarray_st;
 
-static __inline__ struct hipExtent make_hipExtent(size_t w, size_t h, size_t d) {
-    struct hipExtent e;
+typedef HUarray_st hipArray;
+typedef HUarray_st* hipArray_t;
+typedef const HUarray_st* hipArray_const_t;
 
-    e.width = w;
-    e.height = h;
-    e.depth = d;
+typedef struct HUmipmappedArray_st {
+    void* data;  // FIXME: generalize this
+    struct hipChannelFormatDesc desc;
+    unsigned int width;
+    unsigned int height;
+    unsigned int depth;
+} HUmipmappedArray_st;
 
-    return e;
-}
+typedef HUmipmappedArray_st* hipMipmappedArray_t;
+typedef const HUmipmappedArray_st* hipMipmappedArray_const_t;
 
-#endif
+#define hipResourceTypeArray            HU_RESOURCE_TYPE_ARRAY
+#define hipResourceTypeMipmappedArray   HU_RESOURCE_TYPE_MIPMAPPED_ARRAY
+#define hipResourceTypeLinear           HU_RESOURCE_TYPE_LINEAR
+#define hipResourceTypePitch2D          HU_RESOURCE_TYPE_PITCH2D
+typedef HUresourcetype hipResourceType;
+
+#define hipResViewFormatNone                        HU_RES_VIEW_FORMAT_NONE
+#define hipResViewFormatUnsignedChar1               HU_RES_VIEW_FORMAT_UINT_1X8
+#define hipResViewFormatUnsignedChar2               HU_RES_VIEW_FORMAT_UINT_2X8
+#define hipResViewFormatUnsignedChar4               HU_RES_VIEW_FORMAT_UINT_4X8
+#define hipResViewFormatSignedChar1                 HU_RES_VIEW_FORMAT_SINT_1X8
+#define hipResViewFormatSignedChar2                 HU_RES_VIEW_FORMAT_SINT_2X8
+#define hipResViewFormatSignedChar4                 HU_RES_VIEW_FORMAT_SINT_4X8
+#define hipResViewFormatUnsignedShort1              HU_RES_VIEW_FORMAT_UINT_1X16
+#define hipResViewFormatUnsignedShort2              HU_RES_VIEW_FORMAT_UINT_2X16
+#define hipResViewFormatUnsignedShort4              HU_RES_VIEW_FORMAT_UINT_4X16
+#define hipResViewFormatSignedShort1                HU_RES_VIEW_FORMAT_SINT_1X16
+#define hipResViewFormatSignedShort2                HU_RES_VIEW_FORMAT_SINT_2X16
+#define hipResViewFormatSignedShort4                HU_RES_VIEW_FORMAT_SINT_4X16
+#define hipResViewFormatUnsignedInt1                HU_RES_VIEW_FORMAT_UINT_1X32
+#define hipResViewFormatUnsignedInt2                HU_RES_VIEW_FORMAT_UINT_2X32
+#define hipResViewFormatUnsignedInt4                HU_RES_VIEW_FORMAT_UINT_4X32
+#define hipResViewFormatSignedInt1                  HU_RES_VIEW_FORMAT_SINT_1X32
+#define hipResViewFormatSignedInt2                  HU_RES_VIEW_FORMAT_SINT_2X32
+#define hipResViewFormatSignedInt4                  HU_RES_VIEW_FORMAT_SINT_4X32
+#define hipResViewFormatHalf1                       HU_RES_VIEW_FORMAT_FLOAT_1X16
+#define hipResViewFormatHalf2                       HU_RES_VIEW_FORMAT_FLOAT_2X16
+#define hipResViewFormatHalf4                       HU_RES_VIEW_FORMAT_FLOAT_4X16
+#define hipResViewFormatFloat1                      HU_RES_VIEW_FORMAT_FLOAT_1X32
+#define hipResViewFormatFloat2                      HU_RES_VIEW_FORMAT_FLOAT_2X32
+#define hipResViewFormatFloat4                      HU_RES_VIEW_FORMAT_FLOAT_4X32
+#define hipResViewFormatUnsignedBlockCompressed1    HU_RES_VIEW_FORMAT_UNSIGNED_BC1
+#define hipResViewFormatUnsignedBlockCompressed2    HU_RES_VIEW_FORMAT_UNSIGNED_BC2
+#define hipResViewFormatUnsignedBlockCompressed3    HU_RES_VIEW_FORMAT_UNSIGNED_BC3
+#define hipResViewFormatUnsignedBlockCompressed4    HU_RES_VIEW_FORMAT_UNSIGNED_BC4
+#define hipResViewFormatSignedBlockCompressed4      HU_RES_VIEW_FORMAT_SIGNED_BC4
+#define hipResViewFormatUnsignedBlockCompressed5    HU_RES_VIEW_FORMAT_UNSIGNED_BC5
+#define hipResViewFormatSignedBlockCompressed5      HU_RES_VIEW_FORMAT_SIGNED_BC5
+#define hipResViewFormatUnsignedBlockCompressed6H   HU_RES_VIEW_FORMAT_UNSIGNED_BC6H
+#define hipResViewFormatSignedBlockCompressed6H     HU_RES_VIEW_FORMAT_SIGNED_BC6H
+#define hipResViewFormatUnsignedBlockCompressed7    HU_RES_VIEW_FORMAT_UNSIGNED_BC7
+typedef HUresourceViewFormat hipResourceViewFormat;
+
+typedef HIP_MEMCPY2D hip_Memcpy2D;
+typedef HIP_MEMCPY3D hipMemcpy3DParms;
+typedef HIP_RESOURCE_DESC hipResourceDesc;
+typedef HIP_RESOURCE_VIEW_DESC hipResourceViewDesc;
+
+#endif /* HIP_USE_ORIGINAL_TYPES */
+
+#endif /* HIP_INCLUDE_HIP_HCC_DETAIL_DRIVER_TYPES_H */

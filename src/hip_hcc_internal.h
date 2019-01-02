@@ -420,6 +420,18 @@ typedef FakeMutex DeviceMutex;
 #warning "Device thread-safe disabled"
 #endif
 
+//---
+// Template overloads for ToString to handle specific types
+
+// This is the default which works for most types:
+template <typename T>
+inline std::string ToString(T v) {
+    std::ostringstream ss;
+    ss << v;
+    return ss.str();
+};
+
+
 //
 //---
 // Protects access to the member _data with a lock acquired on contruction/destruction.

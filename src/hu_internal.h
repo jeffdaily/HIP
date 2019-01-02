@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2018 - present Advanced Micro Devices, Inc. All rights reserved.
+Copyright (c) 2015 - present Advanced Micro Devices, Inc. All rights reserved.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -23,28 +23,17 @@ THE SOFTWARE.
 #ifndef HIP_SRC_HU_INTERNAL_H
 #define HIP_SRC_HU_INTERNAL_H
 
-#include <hc.hpp>
-#include <hsa/hsa.h>
-#include <hsa/hsa_ext_amd.h>
-
-#include "hip/hip_common.h"
+#include "hip_hcc_internal.h"
 #include "hip/hip_driver.h"
-#include "env.h"
 
-#include <iostream>
-#include <iomanip>
-#include <sstream>
-#include <string>
-
+#if 0
 std::ostream& operator<<(std::ostream& os, const HUstream_st& s);
 std::ostream& operator<<(std::ostream& os, const HUipcEventHandle_st& s);
 std::ostream& operator<<(std::ostream& os, const HUipcMemHandle_st& s);
 
 // Helper functions to convert HU function arguments into strings.
-// Handles POD data types as well as enumerations (ie hipMemcpyKind).
+// Handles POD data types as well as enumerations.
 // The implementation uses C++11 variadic templates and template specialization.
-// The hipMemcpyKind example below is a good example that shows how to implement conversion for a
-// new HSA type.
 
 // Handy macro to convert an enumeration to a stringified version of same:
 #define CASE_STR(x)                                                                                \
@@ -110,64 +99,7 @@ template <typename T, typename... Args>
 inline std::string ToString(T first, Args... args) {
     return ToString(first) + ", " + ToString(args...);
 }
-
-//---
-// Environment variables:
-
-// Intended to distinguish whether an environment variable should be visible only in debug mode, or
-// in debug+release.
-// static const int debug = 0;
-extern const int release;
-
-// TODO - this blocks both kernels and memory ops.  Perhaps should have separate env var for
-// kernels?
-extern int HIP_LAUNCH_BLOCKING;
-extern int HIP_API_BLOCKING;
-
-extern int HIP_PRINT_ENV;
-extern int HIP_PROFILE_API;
-// extern int HIP_TRACE_API;
-extern int HIP_ATP;
-extern int HIP_DB;
-extern int HIP_STAGING_SIZE;    /* size of staging buffers, in KB */
-extern int HIP_STREAM_SIGNALS;  /* number of signals to allocate at stream creation */
-extern int HIP_VISIBLE_DEVICES; /* Contains a comma-separated sequence of GPU identifiers */
-extern int HIP_FORCE_P2P_HOST;
-
-extern int HIP_HOST_COHERENT;
-
-extern int HIP_HIDDEN_FREE_MEM;
-//---
-// Chicken bits for disabling functionality to work around potential issues:
-extern int HIP_SYNC_HOST_ALLOC;
-extern int HIP_SYNC_STREAM_WAIT;
-
-extern int HIP_SYNC_NULL_STREAM;
-extern int HIP_INIT_ALLOC;
-extern int HIP_FORCE_NULL_STREAM;
-
-extern int HIP_DUMP_CODE_OBJECT;
-
-// TODO - remove when this is standard behavior.
-extern int HCC_OPT_FLUSH;
-
-// Class to assign a short TID to each new thread, for HIP debugging purposes.
-class TidInfo {
-   public:
-    TidInfo();
-
-    int tid() const { return _shortTid; };
-    pid_t pid() const { return _pid; };
-    uint64_t incApiSeqNum() { return ++_apiSeqNum; };
-    uint64_t apiSeqNum() const { return _apiSeqNum; };
-
-   private:
-    int _shortTid;
-    pid_t _pid;
-
-    // monotonically increasing API sequence number for this threa.
-    uint64_t _apiSeqNum;
-};
+#endif
 
 struct ThreadLocalData {
     TidInfo tid;
@@ -212,45 +144,17 @@ struct ThreadLocalData* get_tls();
   } _var_;                                                      \
   }
 
-#define HU_INIT()
-#define HU_TRACE_API 1
-
-static inline uint64_t getTicks() { return hc::get_system_ticks(); }
-extern uint64_t recordApiTrace(std::string* fullStr, const std::string& apiStr);
-
-// Color defs for debug messages:
-#define KRED "\x1B[31m"
-
-extern const char* API_COLOR;
-extern const char* API_COLOR_END;
-#if 1
-#define HU_API_TRACE(forceTrace, ...)                                                              \
-    uint64_t hipApiStartTick = 0;                                                                  \
-    {                                                                                              \
-        if (forceTrace || HU_TRACE_API) {                                                          \
-            std::string apiStr = std::string(__func__) + " (" + ToString(__VA_ARGS__) + ')';       \
-            std::string fullStr;                                                                   \
-            hipApiStartTick = recordApiTrace(&fullStr, apiStr);                                    \
-        }                                                                                          \
-    }
-#else
-// Swallow HU_API_TRACE
-#define HU_API_TRACE(IS_CMD, ...)
-#endif
-
 // This macro should be called at the end of every HU API, and only at the end of top-level HU
 // APIS (not internal HU). It prints the closing message when the debug trace is enabled.
 #define ihuLogStatus(huStatus)                                                                      \
     ({                                                                                              \
-        HUresult localHipStatus = huStatus; /*local copy so huStatus only evaluated once*/          \
-        if (HU_TRACE_API) {                                                                         \
-            auto ticks = getTicks() - hipApiStartTick;                                              \
-            fprintf(stderr, "  %shu-api %-30s ret=%2d (%s)>> +%lu ns%s\n",                          \
-                    (localHipStatus == 0) ? API_COLOR : KRED, __func__, localHipStatus,             \
-                    ToChar(localHipStatus), ticks, API_COLOR_END);                                  \
-        }                                                                                           \
-        localHipStatus;                                                                             \
+        HUresult localHuStatus = huStatus; /*local copy so huStatus only evaluated once*/          \
+        localHuStatus;                                                                             \
     })
+
+#define HU_INIT()
+
+#define HU_API_TRACE(IS_CMD, ...)
 
 #define HU_INIT_API(cid, ...) \
     HU_INIT() \

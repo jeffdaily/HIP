@@ -447,24 +447,28 @@ hipError_t hipArrayCreate(hipArray** array, const HIP_ARRAY_DESCRIPTOR* pAllocat
     HIP_INIT_SPECIAL_API(hipArrayCreate, (TRACE_MEM), array, pAllocateArray);
     HIP_SET_DEVICE();
     hipError_t hip_status = hipSuccess;
-    if (pAllocateArray->width > 0) {
+    if (pAllocateArray->Width > 0) {
         auto ctx = ihipGetTlsDefaultCtx();
         *array = (hipArray*)malloc(sizeof(hipArray));
-        array[0]->drvDesc = *pAllocateArray;
-        array[0]->width = pAllocateArray->width;
-        array[0]->height = pAllocateArray->height;
+        //array[0]->drvDesc = *pAllocateArray;
+        array[0]->drvDesc.Width = pAllocateArray->Width;
+        array[0]->drvDesc.Height = pAllocateArray->Height;
+        array[0]->drvDesc.Format = pAllocateArray->Format;
+        array[0]->drvDesc.NumChannels = pAllocateArray->NumChannels;
+        array[0]->width = pAllocateArray->Width;
+        array[0]->height = pAllocateArray->Height;
         array[0]->isDrv = true;
         array[0]->textureType = hipTextureType2D;
         void** ptr = &array[0]->data;
         if (ctx) {
             const unsigned am_flags = 0;
-            size_t size = pAllocateArray->width;
-            if (pAllocateArray->height > 0) {
-                size = size * pAllocateArray->height;
+            size_t size = pAllocateArray->Width;
+            if (pAllocateArray->Height > 0) {
+                size = size * pAllocateArray->Height;
             }
             hsa_ext_image_channel_type_t channelType;
             size_t allocSize = 0;
-            switch (pAllocateArray->format) {
+            switch (pAllocateArray->Format) {
                 case HIP_AD_FORMAT_UNSIGNED_INT8:
                     allocSize = size * sizeof(uint8_t);
                     channelType = HSA_EXT_IMAGE_CHANNEL_TYPE_UNSIGNED_INT8;
@@ -512,8 +516,8 @@ hipError_t hipArrayCreate(hipArray** array, const HIP_ARRAY_DESCRIPTOR* pAllocat
 
             hsa_ext_image_descriptor_t imageDescriptor;
 
-            imageDescriptor.width = pAllocateArray->width;
-            imageDescriptor.height = pAllocateArray->height;
+            imageDescriptor.width = pAllocateArray->Width;
+            imageDescriptor.height = pAllocateArray->Height;
             imageDescriptor.depth = 0;
             imageDescriptor.array_size = 0;
 
@@ -521,11 +525,11 @@ hipError_t hipArrayCreate(hipArray** array, const HIP_ARRAY_DESCRIPTOR* pAllocat
 
             hsa_ext_image_channel_order_t channelOrder;
 
-            if (pAllocateArray->numChannels == 4) {
+            if (pAllocateArray->NumChannels == 4) {
                 channelOrder = HSA_EXT_IMAGE_CHANNEL_ORDER_RGBA;
-            } else if (pAllocateArray->numChannels == 2) {
+            } else if (pAllocateArray->NumChannels == 2) {
                 channelOrder = HSA_EXT_IMAGE_CHANNEL_ORDER_RG;
-            } else if (pAllocateArray->numChannels == 1) {
+            } else if (pAllocateArray->NumChannels == 1) {
                 channelOrder = HSA_EXT_IMAGE_CHANNEL_ORDER_R;
             }
             imageDescriptor.format.channel_order = channelOrder;
@@ -634,17 +638,17 @@ hipError_t hipMallocArray(hipArray** array, const hipChannelFormatDesc* desc, si
     return ihipLogStatus(hip_status);
 }
 
-hipError_t hipArray3DCreate(hipArray** array, const HIP_ARRAY_DESCRIPTOR* pAllocateArray) {
+hipError_t hipArray3DCreate(hipArray** array, const HIP_ARRAY3D_DESCRIPTOR* pAllocateArray) {
     HIP_INIT_SPECIAL_API(hipArray3DCreate, (TRACE_MEM), array, pAllocateArray);
     hipError_t hip_status = hipSuccess;
 
     auto ctx = ihipGetTlsDefaultCtx();
 
     *array = (hipArray*)malloc(sizeof(hipArray));
-    array[0]->type = pAllocateArray->flags;
-    array[0]->width = pAllocateArray->width;
-    array[0]->height = pAllocateArray->height;
-    array[0]->depth = pAllocateArray->depth;
+    array[0]->type = pAllocateArray->Flags;
+    array[0]->width = pAllocateArray->Width;
+    array[0]->height = pAllocateArray->Height;
+    array[0]->depth = pAllocateArray->Depth;
     array[0]->drvDesc = *pAllocateArray;
     array[0]->isDrv = true;
     array[0]->textureType = hipTextureType3D;
@@ -652,11 +656,11 @@ hipError_t hipArray3DCreate(hipArray** array, const HIP_ARRAY_DESCRIPTOR* pAlloc
 
     if (ctx) {
         const unsigned am_flags = 0;
-        const size_t size = pAllocateArray->width * pAllocateArray->height * pAllocateArray->depth;
+        const size_t size = pAllocateArray->Width * pAllocateArray->Height * pAllocateArray->Depth;
 
         size_t allocSize = 0;
         hsa_ext_image_channel_type_t channelType;
-        switch (pAllocateArray->format) {
+        switch (pAllocateArray->Format) {
             case HIP_AD_FORMAT_UNSIGNED_INT8:
                 allocSize = size * sizeof(uint8_t);
                 channelType = HSA_EXT_IMAGE_CHANNEL_TYPE_UNSIGNED_INT8;
@@ -704,14 +708,14 @@ hipError_t hipArray3DCreate(hipArray** array, const HIP_ARRAY_DESCRIPTOR* pAlloc
                                      &allocGranularity);
 
         hsa_ext_image_descriptor_t imageDescriptor;
-        imageDescriptor.width = pAllocateArray->width;
-        imageDescriptor.height = pAllocateArray->height;
+        imageDescriptor.width = pAllocateArray->Width;
+        imageDescriptor.height = pAllocateArray->Height;
         imageDescriptor.depth = 0;
         imageDescriptor.array_size = 0;
-        switch (pAllocateArray->flags) {
+        switch (pAllocateArray->Flags) {
             case hipArrayLayered:
                 imageDescriptor.geometry = HSA_EXT_IMAGE_GEOMETRY_2DA;
-                imageDescriptor.array_size = pAllocateArray->depth;
+                imageDescriptor.array_size = pAllocateArray->Depth;
                 break;
             case hipArraySurfaceLoadStore:
             case hipArrayTextureGather:
@@ -721,17 +725,17 @@ hipError_t hipArray3DCreate(hipArray** array, const HIP_ARRAY_DESCRIPTOR* pAlloc
             case hipArrayCubemap:
             default:
                 imageDescriptor.geometry = HSA_EXT_IMAGE_GEOMETRY_3D;
-                imageDescriptor.depth = pAllocateArray->depth;
+                imageDescriptor.depth = pAllocateArray->Depth;
                 break;
         }
         hsa_ext_image_channel_order_t channelOrder;
 
         // getChannelOrderAndType(*desc, hipReadModeElementType, &channelOrder, &channelType);
-        if (pAllocateArray->numChannels == 4) {
+        if (pAllocateArray->NumChannels == 4) {
             channelOrder = HSA_EXT_IMAGE_CHANNEL_ORDER_RGBA;
-        } else if (pAllocateArray->numChannels == 2) {
+        } else if (pAllocateArray->NumChannels == 2) {
             channelOrder = HSA_EXT_IMAGE_CHANNEL_ORDER_RG;
-        } else if (pAllocateArray->numChannels == 1) {
+        } else if (pAllocateArray->NumChannels == 1) {
             channelOrder = HSA_EXT_IMAGE_CHANNEL_ORDER_R;
         }
         imageDescriptor.format.channel_order = channelOrder;
@@ -1381,8 +1385,10 @@ hipError_t hipMemcpyAtoH(void* dst, hipArray* srcArray, size_t srcOffset, size_t
     return ihipLogStatus(e);
 }
 
-hipError_t hipMemcpy3D(const struct hipMemcpy3DParms* p) {
+hipError_t hipMemcpy3D(const hipMemcpy3DParms* p) {
     HIP_INIT_SPECIAL_API(hipMemcpy3D, (TRACE_MCMD), p);
+    /* TODO */
+#if 0
     hipError_t e = hipSuccess;
     if (p) {
         size_t byteSize;
@@ -1465,6 +1471,9 @@ hipError_t hipMemcpy3D(const struct hipMemcpy3DParms* p) {
     } else {
         e = hipErrorInvalidValue;
     }
+#else
+    hipError_t e = hipErrorInvalidValue;
+#endif
     return ihipLogStatus(e);
 }
 
@@ -1701,8 +1710,8 @@ hipError_t hipMemcpyParam2D(const hip_Memcpy2D* pCopy) {
     if (pCopy == nullptr) {
         e = hipErrorInvalidValue;
     }
-    e = ihipMemcpy2D(pCopy->dstArray->data, pCopy->widthInBytes, pCopy->srcHost, pCopy->srcPitch,
-                     pCopy->widthInBytes, pCopy->height, hipMemcpyDefault);
+    e = ihipMemcpy2D(pCopy->dstArray->data, pCopy->WidthInBytes, pCopy->srcHost, pCopy->srcPitch,
+                     pCopy->WidthInBytes, pCopy->Height, hipMemcpyDefault);
     return ihipLogStatus(e);
 }
 
