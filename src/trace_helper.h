@@ -54,6 +54,8 @@ inline std::string ToHexString(T v) {
 //---
 // Template overloads for ToString to handle specific types
 
+// moved to hip_hcc_internal.h
+#if 0
 // This is the default which works for most types:
 template <typename T>
 inline std::string ToString(T v) {
@@ -61,6 +63,7 @@ inline std::string ToString(T v) {
     ss << v;
     return ss.str();
 };
+#endif
 
 
 //  hipEvent_t specialization. TODO - maybe add an event ID for debug?

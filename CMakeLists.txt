@@ -206,6 +206,21 @@ if(HIP_PLATFORM STREQUAL "hcc")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${HIP_HCC_BUILD_FLAGS}")
 
     set(SOURCE_FILES_RUNTIME
+        src/hu_array.cpp
+        src/hu_ctx.cpp
+        src/hu_device.cpp
+        src/hu_driver.cpp
+        src/hu_event.cpp
+        src/hu_func.cpp
+        src/hu_graphics.cpp
+        src/hu_internal.h
+        src/hu_ipc.cpp
+        src/hu_launch.cpp
+        src/hu_link.cpp
+        src/hu_mem.cpp
+        src/hu_module.cpp
+        src/hu_stream.cpp
+        src/hu_tex.cpp
         src/code_object_bundle.cpp
         src/hip_clang.cpp
         src/hip_hcc.cpp

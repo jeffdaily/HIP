@@ -34,12 +34,14 @@ THE SOFTWARE.
 #include <string.h>  // for getDeviceProp
 #include <hip/hip_common.h>
 
+#if 0
 enum {
     HIP_SUCCESS = 0,
     HIP_ERROR_INVALID_VALUE,
     HIP_ERROR_NOT_INITIALIZED,
     HIP_ERROR_LAUNCH_OUT_OF_RESOURCES
 };
+#endif
 
 typedef struct {
     // 32-bit Atomics
@@ -334,5 +336,7 @@ static inline hipError_t hipHostMalloc(T** ptr, size_t size,
     return hipHostMalloc((void**)ptr, size, flags);
 }
 #endif
+
+#include <hip/hip_driver.h>
 
 #endif
