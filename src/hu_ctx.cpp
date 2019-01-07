@@ -2,6 +2,7 @@
 
 extern thread_local std::stack<ihipCtx_t*> tls_ctxStack;
 extern thread_local bool tls_getPrimaryCtx;
+extern hipError_t ihipEnablePeerAccess(hipCtx_t peerCtx, unsigned int flags);
 
 HUresult huCtxAttach(HUcontext *pctx, unsigned int flags) {
     HU_INIT_API(huCtxAttach, pctx, flags);
@@ -33,10 +34,13 @@ HUresult huCtxDisablePeerAccess(HUcontext peerContext) {
     return ihuLogStatus(HIP_ERROR_NOT_SUPPORTED);;
 }
 
-HUresult huCtxEnablePeerAccess(HUcontext peerContext, unsigned int Flags) {
-    HU_INIT_API(huCtxEnablePeerAccess, peerContext, Flags);
+HUresult huCtxEnablePeerAccess(HUcontext peerCtx, unsigned int flags) {
+    HU_INIT_API(huCtxEnablePeerAccess, peerCtx, flags);
 
-    return ihuLogStatus(HIP_ERROR_NOT_SUPPORTED);;
+    hipError_t he = ihipEnablePeerAccess(peerCtx, flags);
+    HUresult hu = he == hipSuccess ? HIP_SUCCESS : HIP_ERROR_NOT_SUPPORTED;
+
+    return ihuLogStatus(hu);
 }
 
 HUresult huCtxGetApiVersion(HUcontext ctx, unsigned int *version) {

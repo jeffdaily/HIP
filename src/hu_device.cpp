@@ -1,9 +1,22 @@
 #include "hu_internal.h"
 
-HUresult huDeviceCanAccessPeer(int *canAccessPeer, HUdevice dev, HUdevice peerDev) {
-    HU_INIT_API(huDeviceCanAccessPeer, canAccessPeer, dev, peerDev);
+extern hipError_t ihipDeviceCanAccessPeer(int* canAccessPeer, hipCtx_t thisCtx, hipCtx_t peerCtx);
 
-    return ihuLogStatus(HIP_ERROR_NOT_SUPPORTED);;
+HUresult huDeviceCanAccessPeer(int *canAccessPeer, HUdevice deviceId, HUdevice peerDeviceId) {
+    HU_INIT_API(huDeviceCanAccessPeer, canAccessPeer, deviceId, peerDeviceId);
+
+    hipError_t he = ihipDeviceCanAccessPeer(canAccessPeer,
+                                            ihipGetPrimaryCtx(deviceId),
+                                            ihipGetPrimaryCtx(peerDeviceId));
+    HUresult hu;
+    if (hipSuccess == he) {
+        hu = HIP_SUCCESS;
+    }
+    else {
+        hu = HIP_ERROR_NOT_SUPPORTED;
+    }
+
+    return ihuLogStatus(hu);
 }
 
 HUresult huDeviceComputeCapability(int *major, int *minor, HUdevice dev) {
@@ -17,7 +30,7 @@ HUresult huDeviceGet(HUdevice *device, int ordinal) {
 
     HUresult e = HIP_SUCCESS;
 
-    auto ctx = ihipGetTlsDefaultCtx();
+    auto ctx = ihipGetPrimaryCtx(ordinal);
 
     if (device != nullptr) {
         if (ctx == nullptr) {
@@ -250,12 +263,10 @@ HUresult huDevicePrimaryCtxGetState(HUdevice dev, unsigned int *flags, int *acti
             ihipCtx_t* primaryCtx = deviceHandle->_primaryCtx;
             if (tempCtx == primaryCtx) {
                 *active = 1;
-                //*flags = tempCtx->_ctxFlags;
-                *flags = 0;
+                *flags = tempCtx->_ctxFlags;
             } else {
                 *active = 0;
-                //*flags = primaryCtx->_ctxFlags;
-                *flags = 0;
+                *flags = primaryCtx->_ctxFlags;
             }
         }
     }

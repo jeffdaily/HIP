@@ -144,12 +144,15 @@ struct ThreadLocalData* get_tls();
   } _var_;                                                      \
   }
 
+
 // This macro should be called at the end of every HU API, and only at the end of top-level HU
 // APIS (not internal HU). It prints the closing message when the debug trace is enabled.
 //        printf("=%d\n", huStatus);
+//        if (localHuStatus == HIP_ERROR_NOT_SUPPORTED) printf("FIX ME!!\n");
 #define ihuLogStatus(huStatus)                                                                      \
     ({                                                                                              \
         HUresult localHuStatus = huStatus; /*local copy so huStatus only evaluated once*/          \
+        if (_hu_trace) printf("=%d %s\n", localHuStatus, localHuStatus == HIP_ERROR_NOT_SUPPORTED ? "FIX ME!" : "OK"); \
         localHuStatus;                                                                             \
     })
 
@@ -163,6 +166,8 @@ struct ThreadLocalData* get_tls();
 //{ static bool done = false; if (!done) { printf("%s\n", #cid); done = true; } }
 //{ printf("%s", #cid); }
 #define HU_INIT_API(cid, ...) \
+    static bool _hu_trace = getenv("HU_TRACE") != NULL; \
+    if (_hu_trace) { printf("%s : %d : %s", __FILE__, __LINE__, #cid); } \
     HU_INIT() \
     HU_API_TRACE(0, __VA_ARGS__);
 

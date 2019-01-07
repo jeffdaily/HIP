@@ -105,7 +105,7 @@ HUresult huGetErrorName(HUresult error, const char **pStr) {
 HUresult huGetErrorString(HUresult error, const char **pStr) {
     HU_INIT_API(huGetErrorString, error, pStr);
 
-    return ihuLogStatus(HIP_ERROR_NOT_SUPPORTED);;
+    return ihuLogStatus(huGetErrorName(error, pStr));
 }
 
 HUresult huGetExportTable(const void **ppExportTable, const HUuuid *pExportTableId) {
