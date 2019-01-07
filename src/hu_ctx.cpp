@@ -1,5 +1,8 @@
 #include "hu_internal.h"
 
+extern thread_local std::stack<ihipCtx_t*> tls_ctxStack;
+extern thread_local bool tls_getPrimaryCtx;
+
 HUresult huCtxAttach(HUcontext *pctx, unsigned int flags) {
     HU_INIT_API(huCtxAttach, pctx, flags);
 
@@ -51,13 +54,37 @@ HUresult huCtxGetCacheConfig(HUfunc_cache *pconfig) {
 HUresult huCtxGetCurrent(HUcontext *pctx) {
     HU_INIT_API(huCtxGetCurrent, pctx);
 
-    return ihuLogStatus(HIP_ERROR_NOT_SUPPORTED);;
+    HUresult e = HIP_SUCCESS;
+    if (pctx == nullptr) {
+        e = HIP_ERROR_INVALID_VALUE;
+    }
+    else {
+        if ((tls_getPrimaryCtx) || tls_ctxStack.empty()) {
+            *pctx = ihipGetTlsDefaultCtx();
+        } else {
+            *pctx = tls_ctxStack.top();
+        }
+    }
+
+    return ihuLogStatus(e);
 }
 
 HUresult huCtxGetDevice(HUdevice *device) {
     HU_INIT_API(huCtxGetDevice, device);
 
-    return ihuLogStatus(HIP_ERROR_NOT_SUPPORTED);;
+    HUresult e = HIP_SUCCESS;
+
+    ihipCtx_t* ctx = ihipGetTlsDefaultCtx();
+
+    if (ctx == nullptr) {
+        e = HIP_ERROR_INVALID_CONTEXT;
+        // TODO *device = nullptr;
+    } else {
+        auto deviceHandle = ctx->getDevice();
+        *device = deviceHandle->_deviceId;
+    }
+
+    return ihuLogStatus(e);
 }
 
 HUresult huCtxGetFlags(unsigned int *flags) {
@@ -105,7 +132,16 @@ HUresult huCtxSetCacheConfig(HUfunc_cache config) {
 HUresult huCtxSetCurrent(HUcontext ctx) {
     HU_INIT_API(huCtxSetCurrent, ctx);
 
-    return ihuLogStatus(HIP_ERROR_NOT_SUPPORTED);;
+    HUresult e = HIP_SUCCESS;
+    if (ctx == NULL) {
+        tls_ctxStack.pop();
+    } else {
+        ihipSetTlsDefaultCtx(ctx);
+        tls_ctxStack.push(ctx);
+        tls_getPrimaryCtx = false;
+    }
+
+    return ihuLogStatus(e);
 }
 
 HUresult huCtxSetLimit(HUlimit limit, size_t value) {

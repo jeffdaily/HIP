@@ -146,16 +146,22 @@ struct ThreadLocalData* get_tls();
 
 // This macro should be called at the end of every HU API, and only at the end of top-level HU
 // APIS (not internal HU). It prints the closing message when the debug trace is enabled.
+//        printf("=%d\n", huStatus);
 #define ihuLogStatus(huStatus)                                                                      \
     ({                                                                                              \
         HUresult localHuStatus = huStatus; /*local copy so huStatus only evaluated once*/          \
         localHuStatus;                                                                             \
     })
 
-#define HU_INIT()
+// Just initialize the HIP runtime, but don't log any trace information.
+#define HU_INIT()                               \
+    std::call_once(hip_initialized, ihipInit);  \
+    ihipCtxStackUpdate();
 
 #define HU_API_TRACE(IS_CMD, ...)
 
+//{ static bool done = false; if (!done) { printf("%s\n", #cid); done = true; } }
+//{ printf("%s", #cid); }
 #define HU_INIT_API(cid, ...) \
     HU_INIT() \
     HU_API_TRACE(0, __VA_ARGS__);

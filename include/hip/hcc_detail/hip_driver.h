@@ -350,6 +350,7 @@ typedef enum HUfilter_mode_enum {
 /**
  * Device properties
  */
+#if 0
 typedef enum HUdevice_attribute_enum {
     HU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK = 1,              /**< Maximum number of threads per block */
     HU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X = 2,                    /**< Maximum block dimension X */
@@ -459,10 +460,14 @@ typedef enum HUdevice_attribute_enum {
     HU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST = 101, /**< The host can directly access managed memory on the device without migration. */
     HU_DEVICE_ATTRIBUTE_MAX
 } HUdevice_attribute;
+#else
+typedef hipDeviceAttribute_t HUdevice_attribute;
+#endif
 
 /**
  * Legacy device properties
  */
+#if 0
 typedef struct HUdevprop_st {
     int maxThreadsPerBlock;     /**< Maximum number of threads per block */
     int maxThreadsDim[3];       /**< Maximum size of each dimension of a block */
@@ -475,6 +480,9 @@ typedef struct HUdevprop_st {
     int clockRate;              /**< Clock frequency in kilohertz */
     int textureAlign;           /**< Alignment requirement for textures */
 } HUdevprop;
+#else
+typedef hipDeviceProp_t HUdevprop;
+#endif
 
 /**
  * Pointer information
