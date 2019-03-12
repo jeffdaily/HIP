@@ -249,9 +249,10 @@ static const DbName dbName[] = {
     {                                                                                                                 \
         if (HIP_DB & (1 << (trace_level))) {                                                                          \
             char msgStr[1000];                                                                                        \
+            uint64_t ts = getTicks();                                                                                 \
             snprintf(msgStr, sizeof(msgStr), __VA_ARGS__);                                                            \
-            fprintf(stderr, "  %ship-%s pid:%d tid:%d:%s%s", dbName[trace_level]._color,                              \
-                    dbName[trace_level]._shortName, tls_tidInfo.pid(), tls_tidInfo.tid(), msgStr, KNRM);              \
+            fprintf(stderr, "  %ship-%s @%lu pid:%d tid:%d:%s%s", dbName[trace_level]._color,                         \
+                    dbName[trace_level]._shortName, ts, tls_tidInfo.pid(), tls_tidInfo.tid(), msgStr, KNRM);          \
         }                                                                                                             \
     }
 #else
