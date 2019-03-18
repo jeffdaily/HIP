@@ -217,15 +217,11 @@ hipError_t ihipModuleLaunchKernel(hipFunction_t f, uint32_t globalWorkSizeX,
 
         hc::completion_future cf;
 
-#if (__hcc_workweek__ > 17312)
-        // leak this memory but it's to check something
-        char *name_copy = strdup(f->_name.c_str());
-#endif
         lp.av->dispatch_hsa_kernel(&aql, config[1] /* kernarg*/, kernArgSize,
                                    (startEvent || stopEvent) ? &cf : nullptr
 #if (__hcc_workweek__ > 17312)
                                    ,
-                                   name_copy
+                                   f->_name.c_str()
 #endif
         );
 
