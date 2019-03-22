@@ -30,6 +30,8 @@ using namespace ELFIO;
 using namespace hip_impl;
 using namespace std;
 
+extern std::vector<int> g_hip_visible_devices;
+
 namespace {
 struct Symbol {
     string name;
@@ -441,10 +443,15 @@ executables(bool rebuild) {  // TODO: This leaks the hsa_executable_ts, it shoul
             code_object_blobs(rebuild);
         }
 
-        for (auto&& acc : accelerators) {
+        for (int i = 0; i < accelerators.size(); i++) {
+            auto acc = accelerators[i];
             auto agent = static_cast<hsa_agent_t*>(acc.get_hsa_agent());
 
             if (!agent || !acc.is_hsa_accelerator()) continue;
+
+            // If device is not in visible devices list, ignore
+            if (std::find(g_hip_visible_devices.begin(), g_hip_visible_devices.end(), (i - 1)) ==
+                    g_hip_visible_devices.end()) continue;
 
             hsa_agent_iterate_isas(*agent,
                                    [](hsa_isa_t x, void* pa) {
