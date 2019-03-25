@@ -2460,3 +2460,9 @@ hipError_t hipHccGetAcceleratorView(hipStream_t stream, hc::accelerator_view** a
 
 //// TODO - add identifier numbers for streams and devices to help with debugging.
 // TODO - add a contect sequence number for debug. Print operator<< ctx:0.1 (device.ctx)
+
+namespace hip_impl {
+    hsa_agent_t current_hsa_agent() {
+        return ihipGetTlsDefaultCtx()->getDevice()->_hsaAgent;
+    }
+} // Namespace hip_impl.

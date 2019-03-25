@@ -429,13 +429,16 @@ void read_kernarg_metadata(
 }  // namespace
 
 namespace hip_impl {
+
+hsa_agent_t current_hsa_agent();
+
 const unordered_map<hsa_agent_t, vector<hsa_executable_t>>&
 executables(bool rebuild) {  // TODO: This leaks the hsa_executable_ts, it should use RAII.
     static unordered_map<hsa_agent_t, vector<hsa_executable_t>> r;
     static once_flag f;
 
     auto cons = [rebuild]() {
-        static const auto accelerators = hc::accelerator::get_all();
+        auto agent = current_hsa_agent();
 
         if (rebuild) {
             // do NOT clear r so we reuse instances of hsa_executable_t
@@ -443,17 +446,8 @@ executables(bool rebuild) {  // TODO: This leaks the hsa_executable_ts, it shoul
             code_object_blobs(rebuild);
         }
 
-        for (int i = 0; i < accelerators.size(); i++) {
-            auto acc = accelerators[i];
-            auto agent = static_cast<hsa_agent_t*>(acc.get_hsa_agent());
-
-            if (!agent || !acc.is_hsa_accelerator()) continue;
-
-            // If device is not in visible devices list, ignore
-            if (std::find(g_hip_visible_devices.begin(), g_hip_visible_devices.end(), (i - 1)) ==
-                    g_hip_visible_devices.end()) continue;
-
-            hsa_agent_iterate_isas(*agent,
+        {
+            hsa_agent_iterate_isas(agent,
                                    [](hsa_isa_t x, void* pa) {
                                        const auto it = code_object_blobs().find(x);
 
@@ -479,7 +473,7 @@ executables(bool rebuild) {  // TODO: This leaks the hsa_executable_ts, it shoul
 
                                        return HSA_STATUS_SUCCESS;
                                    },
-                                   agent);
+                                   &agent);
         }
     };
 
