@@ -52,6 +52,14 @@ THE SOFTWARE.
 // TODO - create a stream-based debug interface as an additional option for tprintf
 #define DB_PEER_CTX 0
 
+#include <unistd.h>
+#include <sys/syscall.h>
+
+#ifdef SYS_gettid
+#define GETTID syscall(SYS_gettid)
+#else
+#error "SYS_gettid unavailable on this system"
+#endif
 
 //=================================================================================================
 // Global variables:
@@ -259,6 +267,28 @@ ihipStream_t::ihipStream_t(ihipCtx_t* ctx, hc::accelerator_view av, unsigned int
       _flags(flags),
       _ctx(ctx),
       _criticalData(this, av) {
+    char *env = getenv("HIP_CU_MASK");
+    fprintf(stderr, "CU MASKING TEST: tid=%ld ihipStream_t HIP_CU_MASK set?=%s flags=%u\n",
+            GETTID, env?"yes":"no", flags);
+    if ((flags & 0x10) && env) {
+        unsigned long long value;
+		std::istringstream is(env);
+        is >> std::hex >> value;
+        std::bitset<64> bits(value);
+        std::vector<bool> bbits(64);
+        for (size_t i=0; i<64; i++) {
+            bbits[i] = bits[i];
+        }
+        if (av.set_cu_mask(bbits)) {
+            fprintf(stderr, "CU MASKING TEST: tid=%ld ihipStream_t HIP_CU_MASK='%s' llu='%llu' SUCCESS\n", GETTID, env, value);
+        }
+        else {
+            fprintf(stderr, "CU MASKING TEST: tid=%ld ihipStream_t HIP_CU_MASK='%s' llu='%llu' FAILED TO SET\n", GETTID, env, value);
+        }
+    }
+    else {
+        fprintf(stderr, "CU MASKING TEST: tid=%ld ihipStream_t not using env var HIP_CU_MASK\n", GETTID);
+    }
     unsigned schedBits = ctx->_ctxFlags & hipDeviceScheduleMask;
 
     switch (schedBits) {

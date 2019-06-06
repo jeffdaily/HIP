@@ -49,6 +49,7 @@ enum queue_priority
 
 //---
 hipError_t ihipStreamCreate(hipStream_t* stream, unsigned int flags, int priority) {
+    fprintf(stderr, "CU MASKING TEST: ihipStreamCreate flags=%u priority=%d\n", flags, priority);
     ihipCtx_t* ctx = ihipGetTlsDefaultCtx();
 
     hipError_t e = hipSuccess;
