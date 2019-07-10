@@ -135,11 +135,7 @@ hipError_t hipStreamWaitEvent(hipStream_t stream, hipEvent_t event, unsigned int
 
     } else if ((ecd._state != hipEventStatusUnitialized) && (ecd._state != hipEventStatusCreated)) {
         if (HIP_SYNC_STREAM_WAIT || (HIP_SYNC_NULL_STREAM && (stream == 0))) {
-            // conservative wait on host for the specified event to complete:
-            // return _stream->locked_eventWaitComplete(this, waitMode);
-            //
-            ecd._stream->locked_eventWaitComplete(
-                ecd.marker(), (event->_flags & hipEventBlockingSync) ? hc::hcWaitModeBlocked
+            ecd.marker().wait((event->_flags & hipEventBlockingSync) ? hc::hcWaitModeBlocked
                                                                      : hc::hcWaitModeActive);
         } else {
             stream = ihipSyncAndResolveStream(stream);
