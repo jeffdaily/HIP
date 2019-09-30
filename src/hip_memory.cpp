@@ -1538,6 +1538,24 @@ hipError_t ihipMemPtrGetInfo(void* ptr, size_t* size) {
 
 template <typename T>
 void ihipMemsetKernel(hipStream_t stream, T* ptr, T val, size_t count) {
+    // Just Use count, instead of dividing by 4, the calling API already does it
+    if (sizeof(T) == sizeof(uint32_t) && (count % sizeof(uint32_t) == 0)) {
+        struct FillData {
+            FillData(T* ptr, T val, size_t count) : ptr(ptr), val(val), count(count) {}
+            T *ptr;
+            T val;
+            size_t count;
+        };
+        auto *fill_data = new FillData(ptr, val, count);
+        // Create a thread in detached mode to handle callback
+        auto *cb = new ihipStreamCallback_t(stream, [](hipStream_t stream, hipError_t error, void* userData) {
+            auto *data = reinterpret_cast<FillData*>(userData);
+            hsa_amd_memory_fill(data->ptr, reinterpret_cast<const std::uint32_t&>(data->val), data->count);
+            delete data;
+        }, fill_data);
+        std::thread(ihipStreamCallbackHandler, cb).detach();
+        return;
+    }
     static constexpr uint32_t block_dim = 256;
 
     const uint32_t grid_dim = clamp_integer<size_t>(count / block_dim, 1, UINT32_MAX);
