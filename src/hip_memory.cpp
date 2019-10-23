@@ -1587,11 +1587,6 @@ hipError_t ihipMemsetSync(void* dst, int  value, size_t count, hipStream_t strea
     if (!stream) return hipErrorInvalidValue;
     if (!dst) return hipErrorInvalidValue;
 
-    size_t allocSize = 0;
-    bool isInbound = (ihipMemPtrGetInfo(dst, &allocSize) == hipSuccess);
-    isInbound &= (allocSize >= count);
-    if (!isInbound) return hipErrorInvalidValue;
-
     try {
         size_t n = count;
         size_t n_tail{};
@@ -1654,11 +1649,6 @@ hipError_t ihipMemsetAsync(void* dst, int  value, size_t count, hipStream_t stre
     if (count == 0) return hipSuccess;
     if (!stream) return hipErrorInvalidValue;
     if (!dst) return hipErrorInvalidValue;
-
-    size_t allocSize = 0;
-    bool isInbound = (ihipMemPtrGetInfo(dst, &allocSize) == hipSuccess);
-    isInbound &= (allocSize >= count);
-    if (!isInbound) return hipErrorInvalidValue;
 
     try {
         if (copyDataType == ihipMemsetDataTypeChar) {
