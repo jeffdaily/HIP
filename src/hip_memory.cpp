@@ -1556,21 +1556,7 @@ hipError_t ihipMemPtrGetInfo(void* ptr, size_t* size) {
 }
 
 template <typename T>
-void ihipMemsetKernel(hipStream_t stream, T* ptr, T val, size_t count, bool isAsync) {
-    // Just Use count, instead of dividing by 4, the calling API already does it
-    if (!isAsync && sizeof(T) == sizeof(uint32_t) && (count % sizeof(uint32_t) == 0)) {
-        // The stream must be locked from all other op insertions to guarantee
-        // that the following HSA call can complete before any other ops.
-        // Flush the stream while locked. Once the stream is empty, we can safely perform
-        // the out-of-band HSA call. Lastly, the stream will unlock via RAII.
-        LockedAccessor_StreamCrit_t crit(stream->criticalData());
-        crit->_av.wait(stream->waitMode());
-        if (!hsa_amd_memory_fill(ptr, reinterpret_cast<const std::uint32_t&>(val), count)) {
-            // Only return if the execution completes without error
-            // if error occured, try the normal version
-            return;
-        }
-    }
+void ihipMemsetKernel(hipStream_t stream, T* ptr, T val, size_t count) {
     static constexpr uint32_t block_dim = 256;
 
     const uint32_t grid_dim = clamp_integer<size_t>(count / block_dim, 1, UINT32_MAX);
@@ -1595,62 +1581,113 @@ typedef enum ihipMemsetDataType {
     ihipMemsetDataTypeInt    = 2
 }ihipMemsetDataType;
 
-hipError_t ihipMemset(void* dst, int  value, size_t count, hipStream_t stream, enum ihipMemsetDataType copyDataType, bool isAsync)
+hipError_t ihipMemsetSync(void* dst, int  value, size_t count, hipStream_t stream, enum ihipMemsetDataType copyDataType)
 {
-    hipError_t e = hipSuccess;
-
-    if (count == 0) return e;
+    if (count == 0) return hipSuccess;
+    if (!stream) return hipErrorInvalidValue;
+    if (!dst) return hipErrorInvalidValue;
 
     size_t allocSize = 0;
     bool isInbound = (ihipMemPtrGetInfo(dst, &allocSize) == hipSuccess);
     isInbound &= (allocSize >= count);
+    if (!isInbound) return hipErrorInvalidValue;
 
-    if (stream && (dst != NULL) && isInbound) {
-        if(copyDataType == ihipMemsetDataTypeChar){
+    try {
+        size_t n = count;
+        size_t n_tail{};
+
+        switch (copyDataType) {
+            case ihipMemsetDataTypeChar:
+                value &= 0xff;
+                value = (value << 24) | (value << 16) | (value << 8) | value;
+                n /= sizeof(std::uint32_t);
+                n_tail = count % sizeof(std::uint32_t);
+                break;
+            case ihipMemsetDataTypeShort:
+                value &= 0xffff;
+                value = (value << 16) | value;
+                n = count * sizeof(std::uint16_t) / sizeof(std::uint32_t);
+                n_tail = (count * sizeof(std::uint16_t)) % sizeof(std::uint32_t);
+                break;
+            default: break;
+        }
+
+        // queue the memset kernel for the remainder of the buffer before the HSA call below
+        if (n_tail != 0) {
+            void *dst_tail = static_cast<std::uint32_t*>(dst) + n;
+            switch (copyDataType) {
+                case ihipMemsetDataTypeChar:
+                    value &= 0xff;
+                    ihipMemsetKernel<char>(stream, static_cast<char*>(dst_tail), value, n_tail);
+                    break;
+                case ihipMemsetDataTypeShort:
+                    value &= 0xffff;
+                    ihipMemsetKernel<short>(stream, static_cast<short*>(dst_tail), value, n_tail / sizeof(std::uint16_t));
+                    break;
+                default: break;
+            }
+        }
+
+        // The stream must be locked from all other op insertions to guarantee
+        // that the following HSA call can complete before any other ops.
+        // Flush the stream while locked. Once the stream is empty, we can safely perform
+        // the out-of-band HSA call. Lastly, the stream will unlock via RAII.
+        LockedAccessor_StreamCrit_t crit(stream->criticalData());
+        crit->_av.wait(stream->waitMode());
+        const auto s = hsa_amd_memory_fill(dst, value, n);
+        if (s != HSA_STATUS_SUCCESS) return hipErrorInvalidValue;
+    }
+    catch (...) {
+        return hipErrorInvalidValue;
+    }
+
+    if (HIP_API_BLOCKING) {
+        tprintf (DB_SYNC, "%s LAUNCH_BLOCKING wait for hipMemsetSync.\n", ToString(stream).c_str());
+        stream->locked_wait();
+    }
+
+    return hipSuccess;
+}
+
+hipError_t ihipMemsetAsync(void* dst, int  value, size_t count, hipStream_t stream, enum ihipMemsetDataType copyDataType)
+{
+    if (count == 0) return hipSuccess;
+    if (!stream) return hipErrorInvalidValue;
+    if (!dst) return hipErrorInvalidValue;
+
+    size_t allocSize = 0;
+    bool isInbound = (ihipMemPtrGetInfo(dst, &allocSize) == hipSuccess);
+    isInbound &= (allocSize >= count);
+    if (!isInbound) return hipErrorInvalidValue;
+
+    try {
+        if (copyDataType == ihipMemsetDataTypeChar) {
             if ((count & 0x3) == 0) {
                 // use a faster dword-per-workitem copy:
-                try {
-                    value = value & 0xff;
-                    uint32_t value32 = (value << 24) | (value << 16) | (value << 8) | (value) ;
-                    ihipMemsetKernel<uint32_t> (stream, static_cast<uint32_t*> (dst), value32, count/sizeof(uint32_t), isAsync);
-                }
-                catch (std::exception &ex) {
-                    e = hipErrorInvalidValue;
-                }
-             } else {
+                value = value & 0xff;
+                uint32_t value32 = (value << 24) | (value << 16) | (value << 8) | (value) ;
+                ihipMemsetKernel<uint32_t> (stream, static_cast<uint32_t*> (dst), value32, count/sizeof(uint32_t));
+            } else {
                 // use a slow byte-per-workitem copy:
-                try {
-                    ihipMemsetKernel<char> (stream, static_cast<char*> (dst), value, count, isAsync);
-                }
-                catch (std::exception &ex) {
-                    e = hipErrorInvalidValue;
-                }
+                ihipMemsetKernel<char> (stream, static_cast<char*> (dst), value, count);
             }
-        } else {
-           if(copyDataType == ihipMemsetDataTypeInt) { // 4 Bytes value
-               try {
-                   ihipMemsetKernel<uint32_t> (stream, static_cast<uint32_t*> (dst), value, count, isAsync);
-               } catch (std::exception &ex) {
-                   e = hipErrorInvalidValue;
-               }
-            } else if(copyDataType == ihipMemsetDataTypeShort) {
-               try {
-                   value = value & 0xffff;
-                   ihipMemsetKernel<uint16_t> (stream, static_cast<uint16_t*> (dst), value, count, isAsync);
-               } catch (std::exception &ex) {
-                   e = hipErrorInvalidValue;
-               }
-            }
+        } else if (copyDataType == ihipMemsetDataTypeInt) { // 4 Bytes value
+            ihipMemsetKernel<uint32_t> (stream, static_cast<uint32_t*> (dst), value, count);
+        } else if (copyDataType == ihipMemsetDataTypeShort) {
+            value = value & 0xffff;
+            ihipMemsetKernel<uint16_t> (stream, static_cast<uint16_t*> (dst), value, count);
         }
-        if (HIP_API_BLOCKING) {
-            tprintf (DB_SYNC, "%s LAUNCH_BLOCKING wait for hipMemsetAsync.\n", ToString(stream).c_str());
-            stream->locked_wait();
-        }
-    } else {
-        e = hipErrorInvalidValue;
+    } catch (...) {
+        return hipErrorInvalidValue;
     }
-    return e;
-};
+
+    if (HIP_API_BLOCKING) {
+        tprintf (DB_SYNC, "%s LAUNCH_BLOCKING wait for hipMemsetAsync.\n", ToString(stream).c_str());
+        stream->locked_wait();
+    }
+
+    return hipSuccess;
+}
 
 hipError_t getLockedPointer(void *hostPtr, size_t dataLen, void **devicePtrPtr)
 {
@@ -1668,7 +1705,7 @@ hipError_t getLockedPointer(void *hostPtr, size_t dataLen, void **devicePtrPtr)
             return(hipSuccess);
         };
         return(hipErrorHostMemoryNotRegistered);
-};
+}
 
 // TODO - review and optimize
 hipError_t ihipMemcpy2D(void* dst, size_t dpitch, const void* src, size_t spitch, size_t width,
@@ -1811,7 +1848,7 @@ hipError_t hipMemsetAsync(void* dst, int value, size_t sizeBytes, hipStream_t st
 
     stream = ihipSyncAndResolveStream(stream);
 
-    e = ihipMemset(dst, value, sizeBytes, stream, ihipMemsetDataTypeChar, true);
+    e = ihipMemsetAsync(dst, value, sizeBytes, stream, ihipMemsetDataTypeChar);
 
     return ihipLogStatus(e);
 };
@@ -1823,7 +1860,7 @@ hipError_t hipMemsetD32Async(hipDeviceptr_t dst, int value, size_t count, hipStr
 
     stream = ihipSyncAndResolveStream(stream);
 
-    e = ihipMemset(dst, value, count, stream, ihipMemsetDataTypeInt, true);
+    e = ihipMemsetAsync(dst, value, count, stream, ihipMemsetDataTypeInt);
 
     return ihipLogStatus(e);
 };
@@ -1836,7 +1873,7 @@ hipError_t hipMemset(void* dst, int value, size_t sizeBytes) {
     hipStream_t stream = hipStreamNull;
     stream =  ihipSyncAndResolveStream(stream);
     if (stream) {
-        e = ihipMemset(dst, value, sizeBytes, stream, ihipMemsetDataTypeChar, false);
+        e = ihipMemsetSync(dst, value, sizeBytes, stream, ihipMemsetDataTypeChar);
         stream->locked_wait();
     } else {
         e = hipErrorInvalidValue;
@@ -1853,7 +1890,7 @@ hipError_t hipMemset2D(void* dst, size_t pitch, int value, size_t width, size_t 
     stream = ihipSyncAndResolveStream(stream);
     if (stream) {
         size_t sizeBytes = pitch * height;
-        e = ihipMemset(dst, value, sizeBytes, stream, ihipMemsetDataTypeChar, false);
+        e = ihipMemsetSync(dst, value, sizeBytes, stream, ihipMemsetDataTypeChar);
         stream->locked_wait();
     } else {
         e = hipErrorInvalidValue;
@@ -1872,7 +1909,7 @@ hipError_t hipMemset2DAsync(void* dst, size_t pitch, int value, size_t width, si
 
     if (stream) {
         size_t sizeBytes = pitch * height;
-        e = ihipMemset(dst, value, sizeBytes, stream, ihipMemsetDataTypeChar, true);
+        e = ihipMemsetAsync(dst, value, sizeBytes, stream, ihipMemsetDataTypeChar);
     } else {
         e = hipErrorInvalidValue;
     }
@@ -1888,7 +1925,7 @@ hipError_t hipMemsetD8(hipDeviceptr_t dst, unsigned char value, size_t sizeBytes
     hipStream_t stream = hipStreamNull;
     stream = ihipSyncAndResolveStream(stream);
     if (stream) {
-        e = ihipMemset(dst, value, sizeBytes, stream, ihipMemsetDataTypeChar, false);
+        e = ihipMemsetSync(dst, value, sizeBytes, stream, ihipMemsetDataTypeChar);
         stream->locked_wait();
     } else {
         e = hipErrorInvalidValue;
@@ -1904,7 +1941,7 @@ hipError_t hipMemsetD32(hipDeviceptr_t dst, int value, size_t count) {
     hipStream_t stream = hipStreamNull;
     stream = ihipSyncAndResolveStream(stream);
     if (stream) {
-        e = ihipMemset(dst, value, count, stream, ihipMemsetDataTypeInt, false);
+        e = ihipMemsetSync(dst, value, count, stream, ihipMemsetDataTypeInt);
         stream->locked_wait();
     } else {
         e = hipErrorInvalidValue;
@@ -1922,7 +1959,7 @@ hipError_t hipMemset3D(hipPitchedPtr pitchedDevPtr, int  value, hipExtent extent
     stream =  ihipSyncAndResolveStream(stream);
     if (stream) {
         size_t sizeBytes = pitchedDevPtr.pitch * extent.height * extent.depth;
-        e = ihipMemset(pitchedDevPtr.ptr, value, sizeBytes, stream, ihipMemsetDataTypeChar, false);
+        e = ihipMemsetSync(pitchedDevPtr.ptr, value, sizeBytes, stream, ihipMemsetDataTypeChar);
         stream->locked_wait();
     } else {
         e = hipErrorInvalidValue;
@@ -1940,7 +1977,7 @@ hipError_t hipMemset3DAsync(hipPitchedPtr pitchedDevPtr, int  value, hipExtent e
     stream =  ihipSyncAndResolveStream(stream);
     if (stream) {
         size_t sizeBytes = pitchedDevPtr.pitch * extent.height * extent.depth;
-        e = ihipMemset(pitchedDevPtr.ptr, value, sizeBytes, stream, ihipMemsetDataTypeChar, true);
+        e = ihipMemsetAsync(pitchedDevPtr.ptr, value, sizeBytes, stream, ihipMemsetDataTypeChar);
     } else {
         e = hipErrorInvalidValue;
     }
