@@ -1555,22 +1555,170 @@ hipError_t ihipMemPtrGetInfo(void* ptr, size_t* size) {
     return e;
 }
 
+static void setCallbackPacket(hsa_queue_t* queue,
+                              uint64_t& index, uint64_t& nextIndex,
+                              hsa_barrier_and_packet_t** barrier1,
+                              hsa_barrier_and_packet_t** barrier2)
+{
+    uint64_t tempIndex = 0;
+    uint32_t mask = queue->size - 1;
+    hsa_barrier_and_packet_t* tempBarrier;
+
+    // Check for empty packets
+    do {
+        tempIndex = hsa_queue_load_write_index_scacquire(queue);
+        tempBarrier = &(((hsa_barrier_and_packet_t*)(queue->base_address))[tempIndex & mask]);
+    } while(!(tempBarrier->header & HSA_PACKET_TYPE_INVALID));
+
+    // Reserve two packets for two barriers
+    index = hsa_queue_add_write_index_scacquire(queue, 2);
+
+    if(index > mask) {
+        index = 0;
+        nextIndex = 1;
+    }
+    else if(index == mask) {
+        nextIndex = 0;
+    } else {
+        nextIndex = index + 1;
+    }
+
+    tempBarrier = new hsa_barrier_and_packet_t;
+    memset(tempBarrier, 0, sizeof(hsa_barrier_and_packet_t));
+    tempBarrier->header = HSA_PACKET_TYPE_INVALID;
+
+    // Barrier 1
+    *barrier1 = &(((hsa_barrier_and_packet_t*)(queue->base_address))[index & mask]);
+    memcpy(*barrier1,tempBarrier,sizeof(hsa_barrier_and_packet_t));
+
+    // Barrier 2
+    *barrier2 = &(((hsa_barrier_and_packet_t*)(queue->base_address))[nextIndex & mask]);
+    memcpy(*barrier2,tempBarrier,sizeof(hsa_barrier_and_packet_t));
+
+    delete tempBarrier;
+}
+
+struct CallbackData {
+    void *ptr;
+    std::uint32_t val;
+    size_t count;
+    hsa_signal_t signal;
+    hsa_signal_t depSignal;
+
+    CallbackData(void *ptr, std::uint32_t val, size_t count, hsa_signal_t signal, hsa_signal_t depSignal)
+        : ptr(ptr), val(val), count(count), signal(signal), depSignal(depSignal)
+    {}
+};
+
+//#define USE_HSA_CALLBACK 1
+#if USE_HSA_CALLBACK
+bool callback_handler(hsa_signal_value_t value, void *args) {
+    CallbackData *cb = reinterpret_cast<CallbackData*>(args);
+    fprintf(stderr, "IN CALLBACK HANDLER\n");
+    hsa_amd_memory_fill(cb->ptr, cb->val, cb->count);
+    hsa_signal_store_screlease(cb->depSignal, 0);
+    fprintf(stderr, "IN CALLBACK HANDLER: signal released\n");
+    delete cb;
+    return false;
+}
+#else
+void callback_handler(CallbackData *cb) {
+    fprintf(stderr, "IN CALLBACK HANDLER\n");
+    hsa_signal_wait_scacquire(cb->signal, HSA_SIGNAL_CONDITION_LT, 1, uint64_t(-1), HSA_WAIT_STATE_ACTIVE);
+    fprintf(stderr, "IN CALLBACK HANDLER: signal acquired\n");
+    hsa_status_t s = hsa_amd_memory_fill(cb->ptr, cb->val, cb->count);
+    if (s != HSA_STATUS_SUCCESS) {
+        fprintf(stderr, "IN CALLBACK HANDLER: hsa_amd_memory_fill failed\n");
+        delete cb;
+        return;
+    }
+    fprintf(stderr, "IN CALLBACK HANDLER: memory filled\n");
+    hsa_signal_store_screlease(cb->depSignal, 0);
+    fprintf(stderr, "IN CALLBACK HANDLER: signal released\n");
+    delete cb;
+}
+#endif
+
 template <typename T>
 void ihipMemsetKernel(hipStream_t stream, T* ptr, T val, size_t count, bool isAsync) {
     // Just Use count, instead of dividing by 4, the calling API already does it
-    if (!isAsync && sizeof(T) == sizeof(uint32_t) && (count % sizeof(uint32_t) == 0)) {
-        // The stream must be locked from all other op insertions to guarantee
-        // that the following HSA call can complete before any other ops.
-        // Flush the stream while locked. Once the stream is empty, we can safely perform
-        // the out-of-band HSA call. Lastly, the stream will unlock via RAII.
-        LockedAccessor_StreamCrit_t crit(stream->criticalData());
-        crit->_av.wait(stream->waitMode());
-        if (!hsa_amd_memory_fill(ptr, reinterpret_cast<const std::uint32_t&>(val), count)) {
-            // Only return if the execution completes without error
-            // if error occured, try the normal version
-            return;
+    if (sizeof(T) == sizeof(uint32_t) && (count % sizeof(uint32_t) == 0)) {
+        if (isAsync) {
+            if (getenv("JEFF")) {
+                // Lock the stream
+                LockedAccessor_StreamCrit_t crit(stream->criticalData());
+                // Lock the queue
+                hsa_queue_t* lockedQ = reinterpret_cast<hsa_queue_t*>(crit->_av.acquire_locked_hsa_queue());
+                if (lockedQ == nullptr) {
+                    // No queue attached to stream hence exiting early
+                    goto fallback;
+                }
+                // Allocate first signal
+                hsa_signal_t signal; // TODO LEAKED ON SUCCESS
+                hsa_status_t status = hsa_signal_create(1, 0, NULL, &signal);
+                if (status != HSA_STATUS_SUCCESS) {
+                    crit->_av.release_locked_hsa_queue();
+                    goto fallback;
+                }
+                // Allocate second signal
+                hsa_signal_t depSignal; // TODO LEAKED ON SUCCESS
+                status = hsa_signal_create(1, 0, NULL, &depSignal);
+                if(status != HSA_STATUS_SUCCESS) {
+                    hsa_signal_destroy(signal);
+                    crit->_av.release_locked_hsa_queue();
+                    goto fallback;
+                }
+                // Register signal callback
+                auto *cb = new CallbackData(ptr, reinterpret_cast<const std::uint32_t&>(val), count, signal, depSignal);
+#if USE_HSA_CALLBACK
+                status = hsa_amd_signal_async_handler(signal, HSA_SIGNAL_CONDITION_EQ, 0, callback_handler, cb);
+                if (status != HSA_STATUS_SUCCESS) {
+                    hsa_signal_destroy(depSignal);
+                    hsa_signal_destroy(signal);
+                    crit->_av.release_locked_hsa_queue();
+                    goto fallback;
+                }
+#else
+                std::async(std::launch::async, callback_handler, cb);
+#endif
+                // Create barrier packets
+                uint64_t index;
+                uint64_t nextIndex;
+                hsa_barrier_and_packet_t* barrier;
+                hsa_barrier_and_packet_t* depBarrier;
+                setCallbackPacket(lockedQ, index, nextIndex, &barrier, &depBarrier);
+                barrier->completion_signal = signal;
+                depBarrier->dep_signal[0] = depSignal;
+                // Update packet header; intentionally updated second barrier header before first in order to avoid race
+                uint16_t header = (HSA_PACKET_TYPE_BARRIER_AND << HSA_PACKET_HEADER_TYPE)| 1 << HSA_PACKET_HEADER_BARRIER;
+                depBarrier->header = header;
+                barrier->header = header;
+                // Trigger the doorbell
+                nextIndex = nextIndex + 1;
+                hsa_queue_store_write_index_screlease(lockedQ, nextIndex);
+                hsa_signal_store_relaxed(lockedQ->doorbell_signal, index+1);
+                // Release queue
+                crit->_av.release_locked_hsa_queue();
+                // Only return if the execution completes without error
+                // if error occured, try the normal version
+                return;
+            }
+        }
+        else {
+            // The stream must be locked from all other op insertions to guarantee
+            // that the following HSA call can complete before any other ops.
+            // Flush the stream while locked. Once the stream is empty, we can safely perform
+            // the out-of-band HSA call. Lastly, the stream will unlock via RAII.
+            LockedAccessor_StreamCrit_t crit(stream->criticalData());
+            crit->_av.wait(stream->waitMode());
+            if (!hsa_amd_memory_fill(ptr, reinterpret_cast<const std::uint32_t&>(val), count)) {
+                // Only return if the execution completes without error
+                // if error occured, try the normal version
+                return;
+            }
         }
     }
+fallback:
     static constexpr uint32_t block_dim = 256;
 
     const uint32_t grid_dim = clamp_integer<size_t>(count / block_dim, 1, UINT32_MAX);
