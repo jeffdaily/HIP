@@ -1581,71 +1581,7 @@ typedef enum ihipMemsetDataType {
     ihipMemsetDataTypeInt    = 2
 }ihipMemsetDataType;
 
-hipError_t ihipMemsetSync(void* dst, int  value, size_t count, hipStream_t stream, enum ihipMemsetDataType copyDataType)
-{
-    if (count == 0) return hipSuccess;
-    if (!stream) return hipErrorInvalidValue;
-    if (!dst) return hipErrorInvalidValue;
-
-    try {
-        size_t n = count;
-        size_t n_tail{};
-
-        switch (copyDataType) {
-            case ihipMemsetDataTypeChar:
-                value &= 0xff;
-                value = (value << 24) | (value << 16) | (value << 8) | value;
-                n /= sizeof(std::uint32_t);
-                n_tail = count % sizeof(std::uint32_t);
-                break;
-            case ihipMemsetDataTypeShort:
-                value &= 0xffff;
-                value = (value << 16) | value;
-                n = count * sizeof(std::uint16_t) / sizeof(std::uint32_t);
-                n_tail = (count * sizeof(std::uint16_t)) % sizeof(std::uint32_t);
-                break;
-            default: break;
-        }
-
-        // queue the memset kernel for the remainder of the buffer before the HSA call below
-        if (n_tail != 0) {
-            void *dst_tail = static_cast<std::uint32_t*>(dst) + n;
-            switch (copyDataType) {
-                case ihipMemsetDataTypeChar:
-                    value &= 0xff;
-                    ihipMemsetKernel<char>(stream, static_cast<char*>(dst_tail), value, n_tail);
-                    break;
-                case ihipMemsetDataTypeShort:
-                    value &= 0xffff;
-                    ihipMemsetKernel<short>(stream, static_cast<short*>(dst_tail), value, n_tail / sizeof(std::uint16_t));
-                    break;
-                default: break;
-            }
-        }
-
-        // The stream must be locked from all other op insertions to guarantee
-        // that the following HSA call can complete before any other ops.
-        // Flush the stream while locked. Once the stream is empty, we can safely perform
-        // the out-of-band HSA call. Lastly, the stream will unlock via RAII.
-        LockedAccessor_StreamCrit_t crit(stream->criticalData());
-        crit->_av.wait(stream->waitMode());
-        const auto s = hsa_amd_memory_fill(dst, value, n);
-        if (s != HSA_STATUS_SUCCESS) return hipErrorInvalidValue;
-    }
-    catch (...) {
-        return hipErrorInvalidValue;
-    }
-
-    if (HIP_API_BLOCKING) {
-        tprintf (DB_SYNC, "%s LAUNCH_BLOCKING wait for hipMemsetSync.\n", ToString(stream).c_str());
-        stream->locked_wait();
-    }
-
-    return hipSuccess;
-}
-
-hipError_t ihipMemsetAsync(void* dst, int  value, size_t count, hipStream_t stream, enum ihipMemsetDataType copyDataType)
-{
+hipError_t ihipMemsetAsync(void* dst, int  value, size_t count, hipStream_t stream, enum ihipMemsetDataType copyDataType) {
     if (count == 0) return hipSuccess;
     if (!stream) return hipErrorInvalidValue;
     if (!dst) return hipErrorInvalidValue;
@@ -1673,6 +1609,99 @@ hipError_t ihipMemsetAsync(void* dst, int  value, size_t count, hipStream_t stre
 
     if (HIP_API_BLOCKING) {
         tprintf (DB_SYNC, "%s LAUNCH_BLOCKING wait for hipMemsetAsync.\n", ToString(stream).c_str());
+        stream->locked_wait();
+    }
+
+    return hipSuccess;
+}
+
+namespace {
+    template<typename T>
+    void handleHeadTail(T* dst, std::size_t n_head, std::size_t n_body,
+                        std::size_t n_tail, hipStream_t stream, int value) {
+        struct Cleaner {
+            static
+            __global__
+            void clean(T* p, std::size_t nh, std::size_t nb, int x) noexcept {
+                p[(threadIdx.x < nh) ? threadIdx.x : (threadIdx.x - nh + nb)] = x;
+            }
+        };
+
+        hipLaunchKernelGGL(Cleaner::clean, 1, n_head + n_tail, 0, stream,
+                           dst, n_head,
+                           n_body * sizeof(std::uint32_t) / sizeof(T), value);
+
+    }
+} // Anonymous namespace.
+
+hipError_t ihipMemsetSync(void* dst, int  value, size_t count, hipStream_t stream, ihipMemsetDataType copyDataType) {
+    if (count == 0) return hipSuccess;
+    if (!stream) return hipErrorInvalidValue;
+    if (!dst) return hipErrorInvalidValue;
+
+    try {
+        size_t n = count;
+        auto aligned_dst{(copyDataType == ihipMemsetDataTypeInt) ? dst :
+            reinterpret_cast<void*>(
+                hip_impl::round_up_to_next_multiple_nonnegative(
+                    reinterpret_cast<std::uintptr_t>(dst), 4ul))};
+        size_t n_head{};
+        size_t n_tail{};
+        int original_value = value;
+
+        switch (copyDataType) {
+            case ihipMemsetDataTypeChar:
+                value &= 0xff;
+                value = (value << 24) | (value << 16) | (value << 8) | value;
+                n_head = static_cast<std::uint8_t*>(aligned_dst) -
+                    static_cast<std::uint8_t*>(dst);
+                n -= n_head;
+                n /= sizeof(std::uint32_t);
+                n_tail = count % sizeof(std::uint32_t);
+                break;
+            case ihipMemsetDataTypeShort:
+                value &= 0xffff;
+                value = (value << 16) | value;
+                n_head = static_cast<std::uint16_t*>(aligned_dst) -
+                    static_cast<std::uint16_t*>(dst);
+                n = (count - n_head) *
+                    sizeof(std::uint16_t) / sizeof(std::uint32_t);
+                n_tail = ((count - n_head) *
+                    sizeof(std::uint16_t)) % sizeof(std::uint32_t);
+                break;
+            default: break;
+        }
+
+        // queue the memset kernel for the remainder of the buffer before the HSA call below
+        if (aligned_dst != dst || n_tail != 0) {
+            switch (copyDataType) {
+            case ihipMemsetDataTypeChar:
+                handleHeadTail(static_cast<std::uint8_t*>(dst), n_head, n,
+                               n_tail, stream, value & 0xff);
+                break;
+            case ihipMemsetDataTypeShort:
+                handleHeadTail(static_cast<std::uint16_t*>(dst), n_head, n,
+                               n_tail, stream, value & 0xffff);
+                break;
+            default: break;
+            }
+        }
+
+        // The stream must be locked from all other op insertions to guarantee
+        // that the following HSA call can complete before any other ops.
+        // Flush the stream while locked. Once the stream is empty, we can safely perform
+        // the out-of-band HSA call. Lastly, the stream will unlock via RAII.
+        LockedAccessor_StreamCrit_t crit(stream->criticalData());
+        crit->_av.wait(stream->waitMode());
+        const auto s = hsa_amd_memory_fill(aligned_dst, value, n);
+        if (s != HSA_STATUS_SUCCESS) return hipErrorInvalidValue;
+    }
+    catch (...) {
+        return hipErrorInvalidValue;
+    }
+
+    if (HIP_API_BLOCKING) {
+        tprintf (DB_SYNC, "%s LAUNCH_BLOCKING wait for hipMemsetSync.\n", ToString(stream).c_str());
         stream->locked_wait();
     }
 
