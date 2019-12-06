@@ -61,29 +61,25 @@ namespace {
     }
 
     inline
-    hsa_agent_t cpu_agent() noexcept {
-        static hsa_agent_t cpu{[]() {
-            hsa_agent_t r{};
-            throwing_result_check(
-                hsa_iterate_agents([](hsa_agent_t x, void* pr) {
-                    hsa_device_type_t t{};
-                    hsa_agent_get_info(x, HSA_AGENT_INFO_DEVICE, &t);
+    hsa_agent_t cpu_agent() {
+        hsa_agent_t r{};
+        throwing_result_check(
+            hsa_iterate_agents([](hsa_agent_t x, void* pr) {
+                hsa_device_type_t t{};
+                hsa_agent_get_info(x, HSA_AGENT_INFO_DEVICE, &t);
 
-                    if (t != HSA_DEVICE_TYPE_CPU) return HSA_STATUS_SUCCESS;
+                if (t != HSA_DEVICE_TYPE_CPU) return HSA_STATUS_SUCCESS;
 
-                    *static_cast<hsa_agent_t *>(pr) = x;
+                *static_cast<hsa_agent_t *>(pr) = x;
 
-                    return HSA_STATUS_INFO_BREAK;
-                }, &r), __FILE__, __func__, __LINE__);
+                return HSA_STATUS_INFO_BREAK;
+            }, &r), __FILE__, __func__, __LINE__);
 
-            return r;
-        }()};
-
-        return cpu;
+        return r;
     }
 
     inline
-    hsa_device_type_t type(hsa_agent_t x) noexcept
+    hsa_device_type_t type(hsa_agent_t x)
     {
         hsa_device_type_t r{};
         throwing_result_check(hsa_agent_get_info(x, HSA_AGENT_INFO_DEVICE, &r),
@@ -94,9 +90,9 @@ namespace {
 
     const auto is_large_BAR{[](){
         std::unique_ptr<void, void (*)(void*)> hsa{
-            (throwing_result_check(hsa_init(), __FILE__, __func__, __LINE__),
-             nullptr),
-            [](void*) { hsa_shut_down(); }};
+            hsa_init() == HSA_STATUS_SUCCESS ? reinterpret_cast<void*>(UINT32_MAX) : nullptr,
+            [](void* p) { if (p) hsa_shut_down(); }};
+        if (!hsa) return false;
         bool r{true};
 
         throwing_result_check(hsa_iterate_agents([](hsa_agent_t x, void* pr) {
@@ -142,7 +138,7 @@ namespace {
     }()};
 
     inline
-    hsa_amd_pointer_info_t info(const void* p) noexcept
+    hsa_amd_pointer_info_t info(const void* p)
     {
         hsa_amd_pointer_info_t r{sizeof(hsa_amd_pointer_info_t)};
         throwing_result_check(
@@ -337,7 +333,7 @@ void generic_copy(void* __restrict dst, const void* __restrict src, size_t n,
 
 inline
 void memcpy_impl(void* __restrict dst, const void* __restrict src, size_t n,
-                 hipMemcpyKind k) noexcept {
+                 hipMemcpyKind k) {
     switch (k) {
     case hipMemcpyHostToHost: std::memcpy(dst, src, n); break;
     case hipMemcpyHostToDevice:
