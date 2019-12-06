@@ -345,9 +345,7 @@ void memcpy_impl(void* __restrict dst, const void* __restrict src, size_t n,
     case hipMemcpyDeviceToHost:
         return is_large_BAR ? do_std_memcpy(dst, src, n)
                             : d2h_copy(dst, src, n, info(src));
-    case hipMemcpyDeviceToDevice:
-        return do_copy(dst, src, n, info(dst).agentOwner,
-                       info(const_cast<void*>(src)).agentOwner);
+    case hipMemcpyDeviceToDevice: hsa_memory_copy(dst, src, n); break;
     default: return generic_copy(dst, src, n, info(dst), info(src));
     }
 }
