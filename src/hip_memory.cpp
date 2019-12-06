@@ -225,7 +225,8 @@ void do_std_memcpy(
 inline
 void d2h_copy(void* __restrict dst, const void* __restrict src, size_t n,
               hsa_amd_pointer_info_t si) {
-    if (si.size == UINT32_MAX) return do_std_memcpy(dst, src, n);
+    // TODO do_std_memcpy was very slow, need to revisit with detailed perf eval
+    //if (si.size == UINT32_MAX) return do_std_memcpy(dst, src, n);
 
     const auto di{info(dst)};
 
@@ -340,13 +341,17 @@ void memcpy_impl(void* __restrict dst, const void* __restrict src, size_t n,
     switch (k) {
     case hipMemcpyHostToHost: std::memcpy(dst, src, n); break;
     case hipMemcpyHostToDevice:
-        return is_large_BAR ? do_std_memcpy(dst, src, n)
-                            : h2d_copy(dst, src, n, info(dst));
+        is_large_BAR ? do_std_memcpy(dst, src, n)
+                     : h2d_copy(dst, src, n, info(dst));
+        break;
     case hipMemcpyDeviceToHost:
-        return is_large_BAR ? do_std_memcpy(dst, src, n)
-                            : d2h_copy(dst, src, n, info(src));
+        // TODO do_std_memcpy was very slow, need to revisit with detailed perf eval
+        //is_large_BAR ? do_std_memcpy(dst, src, n)
+        //             : d2h_copy(dst, src, n, info(src));
+        d2h_copy(dst, src, n, info(src));
+        break;
     case hipMemcpyDeviceToDevice: hsa_memory_copy(dst, src, n); break;
-    default: return generic_copy(dst, src, n, info(dst), info(src));
+    default: generic_copy(dst, src, n, info(dst), info(src));
     }
 }
 
