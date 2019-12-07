@@ -389,8 +389,8 @@ hipError_t memcpySync(void* dst, const void* src, size_t sizeBytes,
 
         LockedAccessor_StreamCrit_t cs{stream->criticalData()};
         cs->_av.wait();
-
         memcpy_impl(dst, src, sizeBytes, kind);
+        cs->_last_op_was_a_copy = true;
     }
     catch (const ihipException& ex) {
         return ex._code;

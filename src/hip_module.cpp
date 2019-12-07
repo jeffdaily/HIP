@@ -240,12 +240,18 @@ hipError_t ihipModuleLaunchKernel(TlsData *tls, hipFunction_t f, uint32_t global
         }
 
         if (HCC_OPT_FLUSH) {
-            aql.header |= (HSA_FENCE_SCOPE_AGENT << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE) |
-                          (HSA_FENCE_SCOPE_AGENT << HSA_PACKET_HEADER_RELEASE_FENCE_SCOPE);
+            // our hack to indicate we need system scope acquire after a memcpySync
+            if (lp.barrier_bit == barrier_bit_wait) {
+                aql.header |= (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE);
+            }
+            else {
+                aql.header |= (HSA_FENCE_SCOPE_AGENT << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE);
+            }
+            aql.header |= (HSA_FENCE_SCOPE_AGENT << HSA_PACKET_HEADER_RELEASE_FENCE_SCOPE);
         } else {
             aql.header |= (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE) |
                           (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_RELEASE_FENCE_SCOPE);
-        };
+        }
 
 
         hc::completion_future cf;
