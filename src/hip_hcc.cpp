@@ -311,10 +311,11 @@ inline void ihipStream_t::locked_wait(bool& waited) {
     {
         LockedAccessor_StreamCrit_t crit(_criticalData);
         // skipping marker since stream is empty
-        if (crit->_av.get_is_empty()) {
+        if (crit->_av.get_is_empty() && !crit->_pending_callback) {
             waited = false;
             return;
         }
+        crit->_pending_callback = false;
         marker = crit->_av.create_marker(hc::no_scope);
     }
 

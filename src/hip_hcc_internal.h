@@ -548,7 +548,7 @@ template <typename MUTEX_TYPE>
 class ihipStreamCriticalBase_t : public LockedBase<MUTEX_TYPE> {
 public:
     ihipStreamCriticalBase_t(ihipStream_t* parentStream, hc::accelerator_view av)
-        :  _parent{parentStream}, _av{av}, _last_op_was_a_copy{false}
+        :  _parent{parentStream}, _av{av}, _last_op_was_a_copy{false}, _pending_callback{false}
     {}
 
     ~ihipStreamCriticalBase_t() {}
@@ -574,6 +574,7 @@ public:
     ihipStream_t* _parent;
     hc::accelerator_view _av;
     bool _last_op_was_a_copy;
+    bool _pending_callback;
 };
 
 

@@ -67,7 +67,7 @@ hipError_t ihipStreamCreate(TlsData *tls, hipStream_t* stream, unsigned int flag
             // CUDA stream behavior is that all kernels submitted will automatically
             // wait for prev to complete, this behaviour will be mainatined by 
             // hipModuleLaunchKernel. execute_any_order will help 
-	    // hipExtModuleLaunchKernel , which uses a special flag
+            // hipExtModuleLaunchKernel , which uses a special flag
 
             {
                 // Obtain mutex access to the device critical data, release by destructor
@@ -255,13 +255,76 @@ hipError_t hipStreamGetPriority(hipStream_t stream, int* priority) {
 
 //---
 hipError_t hipStreamAddCallback(hipStream_t stream, hipStreamCallback_t callback, void* userData,
-                                unsigned int flags) {
+        unsigned int flags) {
     HIP_INIT_API(hipStreamAddCallback, stream, callback, userData, flags);
-    hipError_t e = hipSuccess;
 
-    // Create a thread in detached mode to handle callback
-    ihipStreamCallback_t* cb = new ihipStreamCallback_t(stream, callback, userData);
-    std::thread(ihipStreamCallbackHandler, cb).detach();
+    auto stream_original{stream};
+    stream = ihipSyncAndResolveStream(stream);
 
-    return ihipLogStatus(e);
+    if (!stream) return hipErrorInvalidValue;
+
+    LockedAccessor_StreamCrit_t cs{stream->criticalData()};
+
+    cs->_pending_callback = true;
+
+    auto av{cs->_av};
+    auto d{[=](hsa_queue_t*) mutable { av.release_locked_hsa_queue(); }};
+    std::unique_ptr<hsa_queue_t, decltype(d)> q{
+        static_cast<hsa_queue_t*>(av.acquire_locked_hsa_queue()),
+        std::move(d)};
+
+    auto b_index{hsa_queue_add_write_index_relaxed(q.get(), 1) % q->size};
+    auto b{static_cast<hsa_barrier_or_packet_t*>(q->base_address) + b_index};
+
+    hsa_signal_create(2, 0, nullptr, static_cast<hsa_signal_t*>(&b->completion_signal));
+
+    auto c_index{hsa_queue_add_write_index_relaxed(q.get(), 1) % q->size};
+    auto c{static_cast<hsa_barrier_or_packet_t*>(q->base_address) + c_index};
+
+    // check for full HSA queue
+    if (c_index - hsa_queue_load_read_index_scacquire(q.get()) >= q->size) {
+        return ihipLogStatus(hipErrorInvalidValue);
+    }
+
+    c->dep_signal[0] = b->completion_signal;
+
+    auto sgn{b->completion_signal};
+
+    auto t{new std::function<void()>{[=]() {
+        callback(stream_original, hipSuccess, userData);
+        hsa_signal_store_relaxed(sgn, 0);
+        //hsa_signal_destroy(sgn);
+    }}};
+
+    hsa_amd_signal_async_handler(b->completion_signal,
+            HSA_SIGNAL_CONDITION_EQ, 1,
+            [](hsa_signal_value_t x, void* p) {
+            (*static_cast<decltype(t)>(p))();
+            delete static_cast<decltype(t)>(p);
+
+            return false;
+            }, t);
+
+    auto acq0{HSA_FENCE_SCOPE_NONE};
+    auto acq1{HSA_FENCE_SCOPE_NONE};
+    auto rel0{HSA_FENCE_SCOPE_NONE};
+    auto rel1{HSA_FENCE_SCOPE_NONE};
+    __atomic_store_n(
+            &b->header,
+            (HSA_PACKET_TYPE_BARRIER_OR << HSA_PACKET_HEADER_TYPE) |
+            (1 << HSA_PACKET_HEADER_BARRIER) |
+            (acq0 << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
+            (rel0 << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE),
+            __ATOMIC_RELAXED);
+    __atomic_store_n(
+            &c->header,
+            (HSA_PACKET_TYPE_BARRIER_OR << HSA_PACKET_HEADER_TYPE) |
+            (1 << HSA_PACKET_HEADER_BARRIER) |
+            (acq1 << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
+            (rel1 << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE),
+            __ATOMIC_RELAXED);
+
+    hsa_signal_store_relaxed(q->doorbell_signal, c_index);
+
+    return ihipLogStatus(hipSuccess);
 }
