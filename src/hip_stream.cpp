@@ -170,7 +170,7 @@ hipError_t hipStreamQuery(hipStream_t stream) {
 
     {
         LockedAccessor_StreamCrit_t crit(stream->_criticalData);
-        isEmpty = crit->_av.get_is_empty();
+        isEmpty = stream->is_empty(crit);
     }
 
     hipError_t e = isEmpty ? hipSuccess : hipErrorNotReady;
@@ -265,8 +265,6 @@ hipError_t hipStreamAddCallback(hipStream_t stream, hipStreamCallback_t callback
 
     LockedAccessor_StreamCrit_t cs{stream->criticalData()};
 
-    cs->_pending_callback = true;
-
     auto av{cs->_av};
     auto d{[=](hsa_queue_t*) mutable { av.release_locked_hsa_queue(); }};
     std::unique_ptr<hsa_queue_t, decltype(d)> q{
@@ -277,6 +275,7 @@ hipError_t hipStreamAddCallback(hipStream_t stream, hipStreamCallback_t callback
     auto b{static_cast<hsa_barrier_or_packet_t*>(q->base_address) + b_index};
 
     hsa_signal_create(2, 0, nullptr, static_cast<hsa_signal_t*>(&b->completion_signal));
+    cs->_pending_callbacks.push_back(b->completion_signal);
 
     auto c_index{hsa_queue_add_write_index_relaxed(q.get(), 1) % q->size};
     auto c{static_cast<hsa_barrier_or_packet_t*>(q->base_address) + c_index};
@@ -293,7 +292,6 @@ hipError_t hipStreamAddCallback(hipStream_t stream, hipStreamCallback_t callback
     auto t{new std::function<void()>{[=]() {
         callback(stream_original, hipSuccess, userData);
         hsa_signal_store_relaxed(sgn, 0);
-        //hsa_signal_destroy(sgn);
     }}};
 
     hsa_amd_signal_async_handler(b->completion_signal,

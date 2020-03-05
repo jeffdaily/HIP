@@ -548,7 +548,7 @@ template <typename MUTEX_TYPE>
 class ihipStreamCriticalBase_t : public LockedBase<MUTEX_TYPE> {
 public:
     ihipStreamCriticalBase_t(ihipStream_t* parentStream, hc::accelerator_view av)
-        :  _parent{parentStream}, _av{av}, _last_op_was_a_copy{false}, _pending_callback{false}
+        :  _parent{parentStream}, _av{av}, _last_op_was_a_copy{false}, _pending_callbacks()
     {}
 
     ~ihipStreamCriticalBase_t() {}
@@ -574,7 +574,7 @@ public:
     ihipStream_t* _parent;
     hc::accelerator_view _av;
     bool _last_op_was_a_copy;
-    bool _pending_callback;
+    std::vector<hsa_signal_t> _pending_callbacks;
 };
 
 
@@ -640,6 +640,9 @@ class ihipStream_t {
 
     // Use this if we already have the stream critical data mutex:
     void wait(LockedAccessor_StreamCrit_t& crit);
+
+    // Use this if we already have the stream critical data mutex:
+    bool is_empty(LockedAccessor_StreamCrit_t& crit);
 
     void launchModuleKernel(hc::accelerator_view av, hsa_signal_t signal, uint32_t blockDimX,
                             uint32_t blockDimY, uint32_t blockDimZ, uint32_t gridDimX,
