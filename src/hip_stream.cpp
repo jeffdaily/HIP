@@ -265,63 +265,76 @@ hipError_t hipStreamAddCallback(hipStream_t stream, hipStreamCallback_t callback
 
     LockedAccessor_StreamCrit_t cs{stream->criticalData()};
 
+    // stream is locked, now lock underlying HSA queue using unique_ptr RAII
     auto av{cs->_av};
     auto d{[=](hsa_queue_t*) mutable { av.release_locked_hsa_queue(); }};
     std::unique_ptr<hsa_queue_t, decltype(d)> q{
         static_cast<hsa_queue_t*>(av.acquire_locked_hsa_queue()),
         std::move(d)};
 
+    // get first packet
     auto b_index{hsa_queue_add_write_index_relaxed(q.get(), 1) % q->size};
     auto b{static_cast<hsa_barrier_or_packet_t*>(q->base_address) + b_index};
+    assert(b->header == HSA_PACKET_TYPE_INVALID);
 
-    hsa_signal_create(2, 0, nullptr, static_cast<hsa_signal_t*>(&b->completion_signal));
-    cs->_pending_callbacks.push_back(b->completion_signal);
-
+    // get second packet
     auto c_index{hsa_queue_add_write_index_relaxed(q.get(), 1) % q->size};
     auto c{static_cast<hsa_barrier_or_packet_t*>(q->base_address) + c_index};
+    assert(c->header == HSA_PACKET_TYPE_INVALID);
 
-    // check for full HSA queue
-    if (c_index - hsa_queue_load_read_index_scacquire(q.get()) >= q->size) {
-        return ihipLogStatus(hipErrorInvalidValue);
-    }
+    // busy wait for rooom in the HSA queue; this should be rare
+    // TODO exponential backoff, limit number of attempts to indicate an error
+    while(c_index - hsa_queue_load_read_index_scacquire(q.get()) >= q->size);
 
+    // zero out all but the packet headers, which should be HSA_PACKET_TYPE_INVALID
+    static constexpr size_t aql_header_size = 16;
+    static constexpr size_t memset_size = sizeof(hsa_barrier_or_packet_t) - aql_header_size;
+    memset(reinterpret_cast<char*>(b)+aql_header_size, 0, memset_size);
+    memset(reinterpret_cast<char*>(c)+aql_header_size, 0, memset_size);
+
+    // create signal in first packet, initialized to 2
+    hsa_signal_create(2, 0, nullptr, static_cast<hsa_signal_t*>(&b->completion_signal));
+
+    // append signal to stream so we can cleanup later
+    cs->_pending_callbacks.push_back(b->completion_signal);
+
+    // second packet depends on first packet's signal reaching 0
     c->dep_signal[0] = b->completion_signal;
 
+    // create callback that can be passed to hsa_amd_signal_async_handler
+    // this function will call the user's callback, then sets first packet's signal to 0 to indicate completion
     auto sgn{b->completion_signal};
-
     auto t{new std::function<void()>{[=]() {
         callback(stream_original, hipSuccess, userData);
         hsa_signal_store_relaxed(sgn, 0);
     }}};
 
-    hsa_amd_signal_async_handler(b->completion_signal,
-            HSA_SIGNAL_CONDITION_EQ, 1,
-            [](hsa_signal_value_t x, void* p) {
+    // register above callback with HSA runtime to be called when first packet's signal
+    // is decremented from 2 to 1 by CP
+    hsa_amd_signal_async_handler(b->completion_signal, HSA_SIGNAL_CONDITION_EQ, 1,
+        [](hsa_signal_value_t x, void* p) {
             (*static_cast<decltype(t)>(p))();
             delete static_cast<decltype(t)>(p);
-
             return false;
-            }, t);
+        }, t);
 
-    auto acq0{HSA_FENCE_SCOPE_NONE};
-    auto acq1{HSA_FENCE_SCOPE_NONE};
-    auto rel0{HSA_FENCE_SCOPE_NONE};
-    auto rel1{HSA_FENCE_SCOPE_NONE};
+    // atomically write the headers of both packets into the HSA queue
     __atomic_store_n(
             &b->header,
             (HSA_PACKET_TYPE_BARRIER_OR << HSA_PACKET_HEADER_TYPE) |
             (1 << HSA_PACKET_HEADER_BARRIER) |
-            (acq0 << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
-            (rel0 << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE),
+            (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
+            (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE),
             __ATOMIC_RELAXED);
     __atomic_store_n(
             &c->header,
             (HSA_PACKET_TYPE_BARRIER_OR << HSA_PACKET_HEADER_TYPE) |
             (1 << HSA_PACKET_HEADER_BARRIER) |
-            (acq1 << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
-            (rel1 << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE),
+            (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
+            (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE),
             __ATOMIC_RELAXED);
 
+    // ring queue's doorbell
     hsa_signal_store_relaxed(q->doorbell_signal, c_index);
 
     return ihipLogStatus(hipSuccess);
