@@ -289,7 +289,9 @@ hipError_t hipStreamAddCallback(hipStream_t stream, hipStreamCallback_t callback
         }, t);
 
     // insert packet into HCC queue
-    cs->_av.create_marker(&aql);
+    auto cf = cs->_av.create_marker(&aql);
+    // create additional marker that blocks the custom one
+    cs->_av.create_blocking_marker(cf, hc::no_scope);
 
     return ihipLogStatus(hipSuccess);
 }
