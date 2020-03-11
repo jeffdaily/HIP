@@ -270,7 +270,7 @@ hipError_t hipStreamAddCallback(hipStream_t stream, hipStreamCallback_t callback
     // get its signal
     auto signal = *reinterpret_cast<hsa_signal_t*>(cf.get_native_handle());
     // increment its signal value
-    hsa_signal_add_acq_rel(signal, 1);
+    hsa_signal_add_relaxed(signal, 1);
 
     // create callback that can be passed to hsa_amd_signal_async_handler
     // this function will call the user's callback, then sets first packet's signal to 0 to indicate completion
