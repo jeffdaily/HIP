@@ -1048,6 +1048,8 @@ inline std::ostream& operator<<(std::ostream& os, const ihipCtx_t* c) {
 
 // Helper functions that are used across src files:
 namespace hip_internal {
+hipError_t memcpySync(void* dst, const void* src, size_t sizeBytes, hipMemcpyKind kind,
+                      hipStream_t stream);
 hipError_t memcpyAsync(void* dst, const void* src, size_t sizeBytes, hipMemcpyKind kind,
                        hipStream_t stream);
 

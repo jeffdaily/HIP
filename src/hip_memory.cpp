@@ -366,7 +366,51 @@ hipError_t memcpyAsync(void* dst, const void* src, size_t sizeBytes,
 
         if (!stream) return hipErrorInvalidValue;
 
-        stream->locked_copyAsync(dst, src, sizeBytes, kind);
+        auto scope0 = hc::no_scope;
+        auto scope1 = hc::no_scope;
+#if 0
+        switch (kind) {
+            case hipMemcpyHostToDevice:
+                scope0 = scope1 = hc::accelerator_scope;
+                break;
+            case hipMemcpyDeviceToHost:
+                scope0 = scope1 = hc::system_scope;
+                break;
+            case hipMemcpyDeviceToDevice:
+                scope0 = scope1 = hc::accelerator_scope;
+                break;
+            default: break;
+        }
+#endif
+
+        LockedAccessor_StreamCrit_t cs{stream->criticalData()};
+
+        // create first marker
+        auto cf = cs->_av.create_marker(scope0);
+        // get its signal
+        auto signal = *reinterpret_cast<hsa_signal_t*>(cf.get_native_handle());
+        // increment its signal value
+        hsa_signal_add_relaxed(signal, 1);
+
+        // create callback that can be passed to hsa_amd_signal_async_handler
+        // this function will call the user's callback, then sets first packet's signal to 0 to indicate completion
+        auto t{new std::function<void()>{[=]() {
+            memcpy_impl(dst, src, sizeBytes, kind);
+            hsa_signal_store_relaxed(signal, 0);
+        }}};
+
+        // register above callback with HSA runtime to be called when first packet's signal
+        // is decremented from 2 to 1 by CP (or it is already at 1)
+        hsa_amd_signal_async_handler(signal, HSA_SIGNAL_CONDITION_EQ, 1,
+            [](hsa_signal_value_t x, void* p) {
+                (*static_cast<decltype(t)>(p))();
+                delete static_cast<decltype(t)>(p);
+                return false;
+            }, t);
+
+        // create additional marker that blocks on the first one
+        cs->_av.create_blocking_marker(cf, scope1);
+        cs->_last_op_was_a_copy = true;
     }
     catch (const ihipException& ex) {
         return ex._code;
