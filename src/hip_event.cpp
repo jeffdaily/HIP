@@ -72,7 +72,8 @@ hipError_t ihipEventCreate(hipEvent_t* event, unsigned flags) {
 
     // TODO-IPC - support hipEventInterprocess.
     unsigned supportedFlags = hipEventDefault | hipEventBlockingSync | hipEventDisableTiming |
-                              hipEventReleaseToDevice | hipEventReleaseToSystem;
+                              hipEventReleaseToDevice | hipEventReleaseToSystem |
+                              hipEventInterprocess;
     const unsigned releaseFlags = (hipEventReleaseToDevice | hipEventReleaseToSystem);
 
     const bool illegalFlags =
@@ -99,7 +100,6 @@ hipError_t hipEventCreate(hipEvent_t* event) {
 
     return ihipLogStatus(ihipEventCreate(event, 0));
 }
-
 
 hipError_t hipEventRecord(hipEvent_t event, hipStream_t stream) {
     HIP_INIT_SPECIAL_API(hipEventRecord, TRACE_SYNC, event, stream);
@@ -237,4 +237,16 @@ hipError_t hipEventQuery(hipEvent_t event) {
     }
 
     return ihipLogStatus(hipSuccess);
+}
+
+hipError_t hipIpcGetEventHandle(hipIpcEventHandle_t* handle, hipEvent_t event)
+{
+    HIP_INIT_API(hipIpcGetEventHandle, handle, event);
+    return ihipLogStatus(hipErrorUnknown);
+}
+
+hipError_t hipIpcOpenEventHandle(hipEvent_t* event, hipIpcEventHandle_t handle)
+{
+    HIP_INIT_API(hipIpcOpenEventHandle, event, handle);
+    return ihipLogStatus(hipErrorUnknown);
 }

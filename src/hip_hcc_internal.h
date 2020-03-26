@@ -402,6 +402,11 @@ class ihipIpcMemHandle_t {
 };
 
 
+struct ihipIpcEventHandle_t {
+    hsa_amd_ipc_signal_t ipc_handle; ///< ipc signal handle on ROCr
+};
+
+
 struct ihipModule_t {
     std::string fileName;
     hsa_executable_t executable = {};
@@ -677,18 +682,27 @@ struct ihipEventData_t {
         _stream = NULL;
         _timestamp = 0;
         _type = hipEventTypeIndependent;
+        _ipc_signal.handle = 0;
     };
 
-    void marker(const hc::completion_future& marker) { _marker = marker; };
+    ~ihipEventData_t() {
+        if (_ipc_signal.handle) {
+            hsa_signal_destroy(_ipc_signal);
+        }
+    }
+
+    void marker(const hc::completion_future& marker) { _marker = marker; }
     hc::completion_future& marker() { return _marker; }
-    uint64_t timestamp() const { return _timestamp; };
-    ihipEventType_t type() const { return _type; };
+    uint64_t timestamp() const { return _timestamp; }
+    ihipEventType_t type() const { return _type; }
+    hsa_signal_t ipc_signal() const { return _ipc_signal; }
 
     ihipEventType_t _type;
     hipEventStatus_t _state;
     hipStream_t _stream;  // Stream where the event is recorded.  Null stream is resolved to actual
                           // stream when recorded
     uint64_t _timestamp;  // store timestamp, may be set on host or by marker.
+    hsa_signal_t _ipc_signal;
    private:
     hc::completion_future _marker;
 };
