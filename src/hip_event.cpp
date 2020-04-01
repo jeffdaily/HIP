@@ -24,6 +24,11 @@ THE SOFTWARE.
 #include "hip_hcc_internal.h"
 #include "trace_helper.h"
 
+#include <errno.h> // errno, ENOENT
+#include <fcntl.h> // O_RDWR, O_CREATE
+#include <sys/mman.h> // shm_open, shm_unlink, mmap, munmap, PROT_READ, PROT_WRITE, MAP_SHARED, MAP_FAILED
+#include <unistd.h> // ftruncate, close
+
 namespace {
 
     inline
@@ -48,6 +53,30 @@ namespace {
                                  ", with error: " + hsa_to_string(res)};
     }
 
+    template<std::size_t m, std::size_t n>
+    inline
+    void throwing_retval_check(int good, int retval, const char (&file)[m],
+                                const char (&function)[n], int line) {
+        if (retval == good) return;
+
+        throw std::runtime_error{"Failed in file " + (file +
+                                 (", in function \"" + (function +
+                                 ("\", on line " + std::to_string(line))))) +
+                                 ", with error: " + strerror(retval)};
+    }
+
+    template<std::size_t m, std::size_t n>
+    inline
+    void throwing_errno_check(bool bad, const char (&file)[m],
+                              const char (&function)[n], int line) {
+        if (!bad) return;
+
+        throw std::runtime_error{"Failed in file " + (file +
+                                 (", in function \"" + (function +
+                                 ("\", on line " + std::to_string(line))))) +
+                                 ", with error: " + strerror(errno)};
+    }
+
 } // Unnamed namespace.
 
 //-------------------------------------------------------------------------------------------------
@@ -67,6 +96,66 @@ void ihipEvent_t::attachToCompletionFuture(const hc::completion_future* cf, hipS
     crit->_eventData._type = eventType;
     crit->_eventData._stream = stream;
     crit->_eventData._state = hipEventStatusRecording;
+}
+
+
+static void createIpcEventShmemIfNeeded(ihipEventData_t &ecd) {
+    if (!ecd._ipc_name.empty()) return;
+
+    // create random shmem name
+    char name_template[] = "/tmp/eventXXXXXX";
+    int temp_fd = mkstemp(name_template);
+    throwing_errno_check(-1 == temp_fd, __FILE__, __func__, __LINE__);
+
+    // copy shmem name into event data, reformat to use a single slash
+    ecd._ipc_name = name_template;
+    ecd._ipc_name.replace(0, 5, "/hip_");
+
+    // open shmem
+    ecd._ipc_fd = shm_open(ecd._ipc_name.c_str(), O_RDWR | O_CREAT, 0777);
+    throwing_errno_check(ecd._ipc_fd < 0, __FILE__, __func__, __LINE__);
+
+    // size it
+    throwing_retval_check(0, ftruncate(ecd._ipc_fd, sizeof(ihipIpcEventShmem_t)), __FILE__, __func__, __LINE__);
+
+    // mmap it
+    ecd._ipc_shmem = (ihipIpcEventShmem_t*)mmap(0, sizeof(ihipIpcEventShmem_t), PROT_READ | PROT_WRITE, MAP_SHARED, ecd._ipc_fd, 0);
+    throwing_errno_check(NULL == ecd._ipc_shmem, __FILE__, __func__, __LINE__);
+
+    // initialize mutex
+    pthread_mutexattr_t attr;
+    throwing_retval_check(0, pthread_mutexattr_init(&attr), __FILE__, __func__, __LINE__);
+    throwing_retval_check(0, pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED), __FILE__, __func__, __LINE__);
+    throwing_retval_check(0, pthread_mutex_init(&ecd._ipc_shmem->mutex, &attr), __FILE__, __func__, __LINE__);
+
+    // initialize shared state
+    ecd._ipc_shmem->status = ecd._state;
+    ecd._ipc_shmem->signal_id = 0;
+
+    // remove temp file
+    throwing_errno_check(-1 == close(temp_fd), __FILE__, __func__, __LINE__);
+    throwing_errno_check(-1 == unlink(name_template), __FILE__, __func__, __LINE__);
+}
+
+void ihipEvent_t::refreshIpcEvent(ihipEventData_t &ecd) {
+    if (ecd._ipc_shmem == NULL) return;
+
+    PthreadMutexRAII guard(&ecd._ipc_shmem->mutex);
+
+    if (ecd._ipc_last_signal_id != ecd._ipc_shmem->signal_id) {
+        // new signal was recorded, refresh local handle
+        if (ecd._ipc_signal.handle != 0) {
+            // free previous handle
+            throwing_result_check(
+                hsa_signal_destroy(ecd._ipc_signal),
+                __FILE__, __func__, __LINE__);
+        }
+        throwing_result_check(
+            hsa_amd_ipc_signal_attach(&ecd._ipc_shmem->ipc_handle, &(ecd._ipc_signal)),
+            __FILE__, __func__, __LINE__);
+        ecd._ipc_last_signal_id = ecd._ipc_shmem->signal_id;
+    }
+    ecd._state = ecd._ipc_shmem->status;
 }
 
 
@@ -96,7 +185,6 @@ static std::pair<hipEventStatus_t, uint64_t> refreshEventStatus(ihipEventData_t 
 hipError_t ihipEventCreate(hipEvent_t* event, unsigned flags) {
     hipError_t e = hipSuccess;
 
-    // TODO-IPC - support hipEventInterprocess.
     unsigned supportedFlags = hipEventDefault | hipEventBlockingSync | hipEventDisableTiming |
                               hipEventReleaseToDevice | hipEventReleaseToSystem |
                               hipEventInterprocess;
@@ -137,17 +225,11 @@ hipError_t hipEventRecord(hipEvent_t event, hipStream_t stream) {
         // TODO-HIP_SYNC_NULL_STREAM : can remove this code when HIP_SYNC_NULL_STREAM = 0
         // If default stream , then wait on all queues.
         ihipCtx_t* ctx = ihipGetTlsDefaultCtx();
-        if (event->_flags & hipEventInterprocess && eCrit->_eventData._ipc_signal.handle) {
-            hsa_signal_add_relaxed(eCrit->_eventData._ipc_signal, 1);
-        }
         ctx->locked_syncDefaultStream(true, true);
         eCrit->_eventData.marker(hc::completion_future());  // reset event
         eCrit->_eventData._stream = stream;
         eCrit->_eventData._timestamp = hc::get_system_ticks();
         eCrit->_eventData._state = hipEventStatusComplete;
-        if (event->_flags & hipEventInterprocess && eCrit->_eventData._ipc_signal.handle) {
-            hsa_signal_subtract_relaxed(eCrit->_eventData._ipc_signal, 1);
-        }
     }
     else {
         // Record the event in the stream:
@@ -155,13 +237,32 @@ hipError_t hipEventRecord(hipEvent_t event, hipStream_t stream) {
         eCrit->_eventData._stream = stream;
         eCrit->_eventData._timestamp = 0;
         eCrit->_eventData._state = hipEventStatusRecording;
-        if (event->_flags & hipEventInterprocess && eCrit->_eventData._ipc_signal.handle) {
+        if (event->_flags & hipEventInterprocess) {
+            createIpcEventShmemIfNeeded(eCrit->_eventData);
+            PthreadMutexRAII guard(&eCrit->_eventData._ipc_shmem->mutex);
+            // remove existing signal, if any
+            if (eCrit->_eventData._ipc_signal.handle != 0) {
+                throwing_result_check(
+                    hsa_signal_destroy(eCrit->_eventData._ipc_signal),
+                    __FILE__, __func__, __LINE__);
+            }
+            // create new HSA IPC signal, initial value 1
+            throwing_result_check(
+                hsa_amd_signal_create(1, 0, NULL, HSA_AMD_SIGNAL_IPC, &eCrit->_eventData._ipc_signal),
+                __FILE__, __func__, __LINE__);
+            // Create HSA IPC handle
+            throwing_result_check(
+                hsa_amd_ipc_signal_create(eCrit->_eventData._ipc_signal, &eCrit->_eventData._ipc_shmem->ipc_handle),
+                __FILE__, __func__, __LINE__);
+            // update shared state
+            eCrit->_eventData._ipc_shmem->status = hipEventStatusRecording;
+            eCrit->_eventData._ipc_shmem->signal_id += 1;
+            // update local signal id to match
+            eCrit->_eventData._ipc_last_signal_id = eCrit->_eventData._ipc_shmem->signal_id;
             // forward signal state from local signal to IPC signal via host callback
-            auto signal{eCrit->_eventData._ipc_signal};
-            // increment IPC signal by 1
-            hsa_signal_add_relaxed(signal, 1);
             // create callback that can be passed to hsa_amd_signal_async_handler
             // this function decrements the IPC signal by 1 to indicate completion
+            auto signal{eCrit->_eventData._ipc_signal};
             auto t{new std::function<void()>{[=]() {
                 hsa_signal_subtract_relaxed(signal, 1);
             }}};
@@ -184,8 +285,22 @@ hipError_t hipEventDestroy(hipEvent_t event) {
     HIP_INIT_API(hipEventDestroy, event);
 
     if (event) {
+        LockedAccessor_EventCrit_t crit(event->criticalData());
+        auto &ecd{crit->_eventData};
+        if (ecd._ipc_signal.handle) {
+            throwing_result_check(
+                hsa_signal_destroy(ecd._ipc_signal),
+                __FILE__, __func__, __LINE__);
+        }
+        if (ecd._ipc_shmem) {
+            throwing_errno_check(
+                -1 == munmap(ecd._ipc_shmem, sizeof(ihipIpcEventShmem_t)),
+                __FILE__, __func__, __LINE__);
+        }
+        if (ecd._ipc_fd) {
+            throwing_errno_check(-1 == close(ecd._ipc_fd), __FILE__, __func__, __LINE__);
+        }
         delete event;
-
         return ihipLogStatus(hipSuccess);
     } else {
         return ihipLogStatus(hipErrorInvalidHandle);
@@ -293,17 +408,21 @@ hipError_t hipEventQuery(hipEvent_t event) {
     auto ecd = event->locked_copyCrit();
 
     // this event is either from an ipc handle, or the owner of a local ipc event
-    if (ecd._ipc_signal.handle) {
-        if (hsa_signal_load_scacquire(ecd._ipc_signal) == 0) {
-            return ihipLogStatus(hipSuccess);
-        }
-        else {
-            return ihipLogStatus(hipErrorNotReady);
+    if (event->_flags & hipEventInterprocess) {
+        if (ecd._ipc_signal.handle) {
+            if (hsa_signal_load_scacquire(ecd._ipc_signal) == 0) {
+                return ihipLogStatus(hipSuccess);
+            }
+            else {
+                return ihipLogStatus(hipErrorNotReady);
+            }
         }
     }
-
-    if (ecd._state == hipEventStatusRecording && !ecd.marker().is_ready()) {
-        return ihipLogStatus(hipErrorNotReady);
+    // normal event
+    else {
+        if (ecd._state == hipEventStatusRecording && !ecd.marker().is_ready()) {
+            return ihipLogStatus(hipErrorNotReady);
+        }
     }
 
     return ihipLogStatus(hipSuccess);
@@ -321,18 +440,13 @@ hipError_t hipIpcGetEventHandle(hipIpcEventHandle_t* handle, hipEvent_t event)
 
     LockedAccessor_EventCrit_t crit(event->criticalData());
 
-    if (crit->_eventData._ipc_signal.handle == 0) {
-        // create new HSA IPC signal
-        throwing_result_check(
-            hsa_amd_signal_create(0, 0, NULL, HSA_AMD_SIGNAL_IPC, &crit->_eventData._ipc_signal),
-            __FILE__, __func__, __LINE__);
-    }
-
-    // Create HSA IPC handle
+    auto &ecd{crit->_eventData};
+    createIpcEventShmemIfNeeded(ecd);
+    // copy name into handle
     ihipIpcEventHandle_t* iHandle = (ihipIpcEventHandle_t*)handle;
-    auto hsa_status = hsa_amd_ipc_signal_create(crit->_eventData._ipc_signal, &(iHandle->ipc_handle));
-    if (hsa_status == HSA_STATUS_ERROR_OUT_OF_RESOURCES) return ihipLogStatus(hipErrorRuntimeMemory);
-    if (hsa_status != HSA_STATUS_SUCCESS) return ihipLogStatus(hipErrorRuntimeOther);
+    memset(iHandle->shmem_name, 0, HIP_IPC_HANDLE_SIZE);
+    ecd._ipc_name.copy(iHandle->shmem_name, std::string::npos);
+
     return ihipLogStatus(hipSuccess);
 #else
     return ihipLogStatus(hipErrorNotSupported);
@@ -347,18 +461,19 @@ hipError_t hipIpcOpenEventHandle(hipEvent_t* event, hipIpcEventHandle_t handle)
     if (!event) return ihipLogStatus(hipErrorInvalidHandle);
 
     // create a new event with timing disabled, per spec
-    auto hip_status = ihipEventCreate(event, hipEventDisableTiming);
+    auto hip_status = ihipEventCreate(event, hipEventDisableTiming | hipEventInterprocess);
     if (hip_status != hipSuccess) return ihipLogStatus(hip_status);
 
-    ihipIpcEventHandle_t* iHandle = (ihipIpcEventHandle_t*)&handle;
     LockedAccessor_EventCrit_t crit((*event)->criticalData());
-    // this event is either recording or complete,
-    // doesn't matter, so long as it isn't in an uninitialized or created state
-    crit->_eventData._state = hipEventStatusRecording;
-    // attach to the ipc signal
-    auto hsa_status = hsa_amd_ipc_signal_attach(&(iHandle->ipc_handle), &(crit->_eventData._ipc_signal));
-    if (hsa_status == HSA_STATUS_ERROR_OUT_OF_RESOURCES) return ihipLogStatus(hipErrorRuntimeMemory);
-    if (hsa_status != HSA_STATUS_SUCCESS) return ihipLogStatus(hipErrorRuntimeOther);
+    auto &ecd{crit->_eventData};
+    ihipIpcEventHandle_t* iHandle = (ihipIpcEventHandle_t*)&handle;
+    ecd._ipc_name = iHandle->shmem_name;
+    // open shmem
+    ecd._ipc_fd = shm_open(ecd._ipc_name.c_str(), O_RDWR, 0777);
+    throwing_errno_check(ecd._ipc_fd < 0, __FILE__, __func__, __LINE__);
+    // mmap it
+    ecd._ipc_shmem = (ihipIpcEventShmem_t*)mmap(0, sizeof(ihipIpcEventShmem_t), PROT_READ | PROT_WRITE, MAP_SHARED, ecd._ipc_fd, 0);
+    throwing_errno_check(NULL == ecd._ipc_shmem, __FILE__, __func__, __LINE__);
 
     return ihipLogStatus(hipSuccess);
 #else

@@ -140,7 +140,7 @@ hipError_t hipStreamWaitEvent(hipStream_t stream, hipEvent_t event, unsigned int
         if ((ecd._state != hipEventStatusUnitialized) && (ecd._state != hipEventStatusCreated)) {
             if (HIP_SYNC_STREAM_WAIT || (HIP_SYNC_NULL_STREAM && (stream == 0))) {
                 // if event is an IPC event, it doesn't have a marker, just an IPC signal
-                if (ecd._ipc_signal.handle) {
+                if (event->_flags & hipEventInterprocess) {
                     auto waitMode = (event->_flags & hipEventBlockingSync) ? HSA_WAIT_STATE_BLOCKED
                                                                            : HSA_WAIT_STATE_ACTIVE;
                     hsa_signal_wait_scacquire(ecd._ipc_signal, HSA_SIGNAL_CONDITION_LT, 1, UINT64_MAX, waitMode);

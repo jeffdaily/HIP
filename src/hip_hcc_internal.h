@@ -27,6 +27,7 @@ THE SOFTWARE.
 #include <hsa/hsa.h>
 #include <unordered_map>
 #include <stack>
+#include <pthread.h>
 
 #include "hsa/hsa_ext_amd.h"
 #include "hip/hip_runtime.h"
@@ -445,11 +446,9 @@ class ihipIpcMemHandle_t {
 class ihipIpcEventHandle_t {
    public:
 #if USE_IPC
-    hsa_amd_ipc_signal_t ipc_handle;  ///< ipc signal handle on ROCr
+    char shmem_name[HIP_IPC_HANDLE_SIZE];
 #endif
-    char reserved[HIP_IPC_EVENT_RESERVED_SIZE];
 };
-
 
 struct ihipModule_t {
     std::string fileName;
@@ -473,6 +472,18 @@ class FakeMutex {
     void lock() {}
     bool try_lock() { return true; }
     void unlock() {}
+};
+
+class PthreadMutexRAII {
+   public:
+    PthreadMutexRAII(pthread_mutex_t *mutex) : _mutex(mutex) {
+        pthread_mutex_lock(_mutex);
+    }
+    ~PthreadMutexRAII() {
+        pthread_mutex_unlock(_mutex);
+    }
+   private:
+    pthread_mutex_t *_mutex;
 };
 
 #if EVENT_THREAD_SAFE
@@ -732,6 +743,13 @@ enum ihipEventType_t {
     hipEventTypeStopCommand,
 };
 
+typedef struct ihipIpcEventShmem_s {
+    pthread_mutex_t mutex;
+    hipEventStatus_t status;
+    int64_t signal_id;
+    hsa_amd_ipc_signal_t ipc_handle;
+} ihipIpcEventShmem_t;
+
 
 struct ihipEventData_t {
     ihipEventData_t() {
@@ -739,6 +757,10 @@ struct ihipEventData_t {
         _stream = NULL;
         _timestamp = 0;
         _type = hipEventTypeIndependent;
+        _ipc_name = "";
+        _ipc_fd = 0;
+        _ipc_shmem = NULL;
+        _ipc_last_signal_id = 0;
         _ipc_signal.handle = 0;
     };
 
@@ -752,6 +774,10 @@ struct ihipEventData_t {
     hipStream_t _stream;  // Stream where the event is recorded.  Null stream is resolved to actual
                           // stream when recorded
     uint64_t _timestamp;  // store timestamp, may be set on host or by marker.
+    std::string _ipc_name;
+    int _ipc_fd;
+    ihipIpcEventShmem_t *_ipc_shmem;
+    int64_t _ipc_last_signal_id;
     hsa_signal_t _ipc_signal;
    private:
     hc::completion_future _marker;
@@ -764,11 +790,7 @@ template <typename MUTEX_TYPE>
 class ihipEventCriticalBase_t : LockedBase<MUTEX_TYPE> {
    public:
     explicit ihipEventCriticalBase_t(const ihipEvent_t* parentEvent) : _parent(parentEvent) {}
-    ~ihipEventCriticalBase_t() {
-        if (_eventData._ipc_signal.handle) {
-            hsa_signal_destroy(_eventData._ipc_signal);
-        }
-    }
+    ~ihipEventCriticalBase_t() {}
 
     // Keep data in structure so it can be easily copied into snapshots
     // (used to reduce lock contention and preserve correct lock order)
@@ -790,9 +812,12 @@ class ihipEvent_t {
     void attachToCompletionFuture(const hc::completion_future* cf, hipStream_t stream,
                                   ihipEventType_t eventType);
 
+    void refreshIpcEvent(ihipEventData_t &ecd);
+
     // Return a copy of the critical state. The critical data is locked during the copy.
     ihipEventData_t locked_copyCrit() {
         LockedAccessor_EventCrit_t crit(_criticalData);
+        refreshIpcEvent(_criticalData._eventData);
         return _criticalData._eventData;
     };
 
