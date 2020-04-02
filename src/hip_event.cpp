@@ -137,18 +137,42 @@ static void createIpcEventShmemIfNeeded(ihipEventData_t &ecd) {
     throwing_errno_check(-1 == unlink(name_template), __FILE__, __func__, __LINE__);
 }
 
+
+static void deleteAllSignals(ihipEventData_t &ecd, bool blocking) {
+    auto waitMode = blocking ? HSA_WAIT_STATE_BLOCKED : HSA_WAIT_STATE_ACTIVE;
+    for (auto& signal : ecd._ipc_old_signals) {
+        hsa_signal_wait_scacquire(signal, HSA_SIGNAL_CONDITION_LT, 1, UINT64_MAX, waitMode);
+        //hsa_signal_destroy(signal);
+    }
+    hsa_signal_wait_scacquire(ecd._ipc_signal, HSA_SIGNAL_CONDITION_LT, 1, UINT64_MAX, waitMode);
+    //hsa_signal_destroy(ecd._ipc_signal);
+}
+
+
+static void cleanOldSignals(ihipEventData_t &ecd) {
+    auto end = std::remove_if(ecd._ipc_old_signals.begin(), ecd._ipc_old_signals.end(),
+            [](hsa_signal_t &signal) {
+                if (hsa_signal_load_scacquire(signal) == 0) {
+                    //hsa_signal_destroy(signal);
+                    return true;
+                }
+                return false;
+            });
+    ecd._ipc_old_signals.erase(end, ecd._ipc_old_signals.end());
+}
+
+
 void ihipEvent_t::refreshIpcEvent(ihipEventData_t &ecd) {
     if (ecd._ipc_shmem == NULL) return;
+
+    cleanOldSignals(ecd);
 
     PthreadMutexRAII guard(&ecd._ipc_shmem->mutex);
 
     if (ecd._ipc_last_signal_id != ecd._ipc_shmem->signal_id) {
         // new signal was recorded, refresh local handle
         if (ecd._ipc_signal.handle != 0) {
-            // free previous handle
-            throwing_result_check(
-                hsa_signal_destroy(ecd._ipc_signal),
-                __FILE__, __func__, __LINE__);
+            ecd._ipc_old_signals.push_back(ecd._ipc_signal);
         }
         throwing_result_check(
             hsa_amd_ipc_signal_attach(&ecd._ipc_shmem->ipc_handle, &(ecd._ipc_signal)),
@@ -242,9 +266,7 @@ hipError_t hipEventRecord(hipEvent_t event, hipStream_t stream) {
             PthreadMutexRAII guard(&eCrit->_eventData._ipc_shmem->mutex);
             // remove existing signal, if any
             if (eCrit->_eventData._ipc_signal.handle != 0) {
-                throwing_result_check(
-                    hsa_signal_destroy(eCrit->_eventData._ipc_signal),
-                    __FILE__, __func__, __LINE__);
+                eCrit->_eventData._ipc_old_signals.push_back(eCrit->_eventData._ipc_signal);
             }
             // create new HSA IPC signal, initial value 1
             throwing_result_check(
@@ -287,11 +309,7 @@ hipError_t hipEventDestroy(hipEvent_t event) {
     if (event) {
         LockedAccessor_EventCrit_t crit(event->criticalData());
         auto &ecd{crit->_eventData};
-        if (ecd._ipc_signal.handle) {
-            throwing_result_check(
-                hsa_signal_destroy(ecd._ipc_signal),
-                __FILE__, __func__, __LINE__);
-        }
+        deleteAllSignals(ecd, event->_flags & hipEventBlockingSync);
         if (ecd._ipc_shmem) {
             throwing_errno_check(
                 -1 == munmap(ecd._ipc_shmem, sizeof(ihipIpcEventShmem_t)),

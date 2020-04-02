@@ -779,6 +779,7 @@ struct ihipEventData_t {
     ihipIpcEventShmem_t *_ipc_shmem;
     int64_t _ipc_last_signal_id;
     hsa_signal_t _ipc_signal;
+    std::vector<hsa_signal_t> _ipc_old_signals;
    private:
     hc::completion_future _marker;
 };

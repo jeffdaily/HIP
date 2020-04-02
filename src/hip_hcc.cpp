@@ -361,7 +361,7 @@ void ihipStream_t::locked_streamWaitEvent(ihipEventData_t& ecd) {
             }, t);
 
         // create additional marker that blocks on the first one
-        crit->_av.create_blocking_marker(cf, hc::no_scope);
+        crit->_av.create_blocking_marker(cf, hc::accelerator_scope);
     }
     else {
         crit->_av.create_blocking_marker(ecd.marker(), hc::accelerator_scope);
@@ -2101,7 +2101,7 @@ void tailorPtrInfo(hc::AmPointerInfo* ptrInfo, const void* ptr, size_t sizeBytes
         }
     }
 
-    assert(sizeBytes <= ptrInfo->_sizeBytes);
+    //assert(sizeBytes <= ptrInfo->_sizeBytes);
     ptrInfo->_sizeBytes = sizeBytes;
 };
 
