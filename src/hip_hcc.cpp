@@ -328,14 +328,29 @@ void ihipStream_t::locked_wait() {
     locked_wait(waited);
 };
 
+typedef struct {
+    int previous_read_index;
+    ihipIpcEventShmem_t *shmem;
+    hsa_signal_t signal;
+} callback_data_t;
+
+static void WaitThenDecrementSignal(callback_data_t *data) {
+    int offset = data->previous_read_index % IPC_SIGNALS_PER_EVENT;
+    // While event valid and locked, spin.
+    while (data->shmem->read_index < data->previous_read_index+IPC_SIGNALS_PER_EVENT && data->shmem->signal[offset] != 0) {
+    }
+    hsa_signal_store_relaxed(data->signal, 0);
+    delete data;
+}
+
 // Causes current stream to wait for specified event to complete:
 // Note this does not provide any kind of host serialization.
 void ihipStream_t::locked_streamWaitEvent(ihipEventData_t& ecd) {
     LockedAccessor_StreamCrit_t crit(_criticalData);
 
-    // if event is an IPC event, it doesn't have a marker, just an IPC signal
+    // if event is an IPC event, it doesn't have a marker
     // we use a host callback to block stream with a signal wait
-    if (ecd._ipc_signal.handle) {
+    if (ecd._ipc_shmem) {
         // create first marker
         auto cf = crit->_av.create_marker(hc::no_scope);
         // get its signal
@@ -345,18 +360,14 @@ void ihipStream_t::locked_streamWaitEvent(ihipEventData_t& ecd) {
 
         // create callback that can be passed to hsa_amd_signal_async_handler
         // this function will host wait on IPC signal, then sets first packet's signal to 0 to indicate completion
-        auto ipc_signal{ecd._ipc_signal};
-        auto t{new std::function<void()>{[=]() {
-            hsa_signal_wait_scacquire(ipc_signal, HSA_SIGNAL_CONDITION_LT, 1, UINT64_MAX, HSA_WAIT_STATE_ACTIVE);
-            hsa_signal_store_relaxed(signal, 0);
-        }}};
+        auto t{new callback_data_t{ecd._ipc_shmem->read_index, ecd._ipc_shmem, signal}};
 
         // register above callback with HSA runtime to be called when first packet's signal
         // is decremented from 2 to 1 by CP (or it is already at 1)
+        // the HSA async handler is single threaded, so we can't block, therefore use a detached thread
         hsa_amd_signal_async_handler(signal, HSA_SIGNAL_CONDITION_EQ, 1,
             [](hsa_signal_value_t x, void* p) {
-                (*static_cast<decltype(t)>(p))();
-                delete static_cast<decltype(t)>(p);
+                std::thread(WaitThenDecrementSignal, static_cast<decltype(t)>(p)).detach();
                 return false;
             }, t);
 

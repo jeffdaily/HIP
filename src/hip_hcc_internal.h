@@ -743,11 +743,12 @@ enum ihipEventType_t {
     hipEventTypeStopCommand,
 };
 
+#define IPC_SIGNALS_PER_EVENT 32
 typedef struct ihipIpcEventShmem_s {
-    pthread_mutex_t mutex;
-    hipEventStatus_t status;
-    int64_t signal_id;
-    hsa_amd_ipc_signal_t ipc_handle;
+    std::atomic<int> owners;
+    std::atomic<int> read_index;
+    std::atomic<int> write_index;
+    std::atomic<int> signal[IPC_SIGNALS_PER_EVENT];
 } ihipIpcEventShmem_t;
 
 
@@ -760,8 +761,6 @@ struct ihipEventData_t {
         _ipc_name = "";
         _ipc_fd = 0;
         _ipc_shmem = NULL;
-        _ipc_last_signal_id = 0;
-        _ipc_signal.handle = 0;
     };
 
     void marker(const hc::completion_future& marker) { _marker = marker; }
@@ -777,9 +776,6 @@ struct ihipEventData_t {
     std::string _ipc_name;
     int _ipc_fd;
     ihipIpcEventShmem_t *_ipc_shmem;
-    int64_t _ipc_last_signal_id;
-    hsa_signal_t _ipc_signal;
-    std::vector<hsa_signal_t> _ipc_old_signals;
    private:
     hc::completion_future _marker;
 };
@@ -813,12 +809,9 @@ class ihipEvent_t {
     void attachToCompletionFuture(const hc::completion_future* cf, hipStream_t stream,
                                   ihipEventType_t eventType);
 
-    void refreshIpcEvent(ihipEventData_t &ecd);
-
     // Return a copy of the critical state. The critical data is locked during the copy.
     ihipEventData_t locked_copyCrit() {
         LockedAccessor_EventCrit_t crit(_criticalData);
-        refreshIpcEvent(_criticalData._eventData);
         return _criticalData._eventData;
     };
 

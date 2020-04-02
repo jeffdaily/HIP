@@ -130,34 +130,30 @@ hipError_t hipDeviceGetStreamPriorityRange(int* leastPriority, int* greatestPrio
 hipError_t hipStreamWaitEvent(hipStream_t stream, hipEvent_t event, unsigned int flags) {
     HIP_INIT_SPECIAL_API(hipStreamWaitEvent, TRACE_SYNC, stream, event, flags);
 
-    hipError_t e = hipSuccess;
+    if (!event) return ihipLogStatus(hipErrorInvalidHandle);
 
-    if (event == nullptr) {
-        e = hipErrorInvalidHandle;
-
-    } else {
-        auto ecd = event->locked_copyCrit(); 
+    auto ecd = event->locked_copyCrit(); 
+    if (event->_flags & hipEventInterprocess) {
+        // this is an IPC event
+        if (ecd._ipc_shmem->read_index >= 0) {
+            // we have at least one recorded event, so proceed
+            stream->locked_streamWaitEvent(ecd);
+        }
+    }
+    else {
         if ((ecd._state != hipEventStatusUnitialized) && (ecd._state != hipEventStatusCreated)) {
             if (HIP_SYNC_STREAM_WAIT || (HIP_SYNC_NULL_STREAM && (stream == 0))) {
-                // if event is an IPC event, it doesn't have a marker, just an IPC signal
-                if (event->_flags & hipEventInterprocess) {
-                    auto waitMode = (event->_flags & hipEventBlockingSync) ? HSA_WAIT_STATE_BLOCKED
-                                                                           : HSA_WAIT_STATE_ACTIVE;
-                    hsa_signal_wait_scacquire(ecd._ipc_signal, HSA_SIGNAL_CONDITION_LT, 1, UINT64_MAX, waitMode);
-                }
-                else {
-                    ecd.marker().wait((event->_flags & hipEventBlockingSync) ? hc::hcWaitModeBlocked
-                                                                             : hc::hcWaitModeActive);
-                }
+                ecd.marker().wait((event->_flags & hipEventBlockingSync) ? hc::hcWaitModeBlocked
+                                                                         : hc::hcWaitModeActive);
             } else {
                 stream = ihipSyncAndResolveStream(stream);
                 // This will use create_blocking_marker to wait on the specified queue.
                 stream->locked_streamWaitEvent(ecd);
             }
         }
-    }  // else event not recorded, return immediately and don't create marker.
+    }
 
-    return ihipLogStatus(e);
+    return ihipLogStatus(hipSuccess);
 };
 
 
